@@ -67,8 +67,8 @@ def generate_ninja_build_for_op(
     system_includes = [
         sysconfig.get_path("include"),
         "$torch_home/include",
-        "$torch_home/include/paddle/phi/api/include/torch_like_api",
-        "$torch_home/include/paddle/phi/api/include/torch_like_api/torch/csrc/api/include",
+        "$torch_home/include/paddle/phi/api/include/compat",
+        "$torch_home/include/paddle/phi/api/include/compat/torch/csrc/api/include",
         "$cuda_home/include",
         jit_env.FLASHINFER_INCLUDE_DIR.resolve(),
         jit_env.FLASHINFER_CSRC_DIR.resolve(),
