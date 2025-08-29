@@ -124,7 +124,7 @@ class JitSpec:
         with lock:
             run_ninja(jit_env.FLASHINFER_JIT_DIR, self.ninja_path, verbose)
 
-def load(self, so_path: Path, class_name: str = None):
+    def load(self, so_path: Path, class_name: str = None):
         load_class = class_name is not None
         loader = paddle.classes if load_class else paddle.ops
         loader.load_library(so_path)
