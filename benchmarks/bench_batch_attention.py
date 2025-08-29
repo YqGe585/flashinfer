@@ -4,8 +4,8 @@ import itertools
 from typing import List, Sequence, Tuple
 
 import numpy as np
+import paddle
 import pandas as pd
-import torch
 
 import flashinfer
 from flashinfer.testing.utils import bench_gpu_time
@@ -20,34 +20,26 @@ def run_bench(
     num_qo_heads: int,
     head_dim: int,
     device: int = 0,
-    causal: bool = True,
+    causal: bool = True
 ) -> Tuple[float, float, float, float, float]:
-    seq_lens = torch.tensor(kv_lens, dtype=torch.int32)
-    q_lens = torch.tensor(qo_lens, dtype=torch.int32)
-    seq_lens_blocks = torch.ceil(seq_lens / page_block_size).int()
-
-    q_indptr = torch.cat([torch.tensor([0]), torch.cumsum(q_lens, 0)], dim=0).int()
-    kv_indptr = torch.cat(
-        [torch.tensor([0]), torch.cumsum(seq_lens_blocks, 0)], dim=0
-    ).int()
+    seq_lens = paddle.to_tensor(data=kv_lens, dtype="int32")
+    q_lens = paddle.to_tensor(data=qo_lens, dtype="int32")
+    seq_lens_blocks = paddle.ceil(x=seq_lens / page_block_size).astype(dtype="int32")
+    q_indptr = paddle.concat(
+        x=[paddle.to_tensor(data=[0]), paddle.cumsum(x=q_lens, axis=0)], axis=0
+    ).astype(dtype="int32")
+    kv_indptr = paddle.concat(
+        x=[paddle.to_tensor(data=[0]), paddle.cumsum(x=seq_lens_blocks, axis=0)], axis=0
+    ).astype(dtype="int32")
     num_blocks = kv_indptr[-1].item()
-
-    q = torch.rand(
-        q_indptr[-1].item(), num_qo_heads, head_dim, dtype=torch.bfloat16, device=device
+    q = paddle.rand(
+        shape=[q_indptr[-1].item(), num_qo_heads, head_dim], dtype="bfloat16"
     )
-    kv_data = torch.randn(
-        num_blocks,
-        2,
-        page_block_size,
-        num_kv_heads,
-        head_dim,
-        dtype=torch.bfloat16,
-        device=device,
+    kv_data = paddle.randn(
+        shape=[num_blocks, 2, page_block_size, num_kv_heads, head_dim], dtype="bfloat16"
     )
-
-    # old
     wrapper_old = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
-        torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=device),
+        paddle.empty(shape=128 * 1024 * 1024, dtype="uint8"),
         kv_layout="NHD",
         backend="fa2",
     )
@@ -55,25 +47,23 @@ def run_bench(
     wrapper_old.plan(
         q_indptr.to(device),
         kv_indptr.to(device),
-        torch.arange(num_blocks, dtype=torch.int32, device=device),
+        paddle.arange(dtype="int32", end=num_blocks),
         last_page_len,
         num_qo_heads,
         num_kv_heads,
         head_dim,
         page_block_size,
         causal=causal,
-        q_data_type=torch.bfloat16,
-        kv_data_type=torch.bfloat16,
+        q_data_type="bfloat16",
+        kv_data_type="bfloat16",
     )
     measurements_old = bench_gpu_time(lambda: wrapper_old.run(q, kv_data))
     ms_old = np.mean(measurements_old)
-
-    # new
     wrapper = flashinfer.BatchAttention(kv_layout="NHD")
     wrapper.plan(
         q_indptr.to(device),
         kv_indptr.to(device),
-        torch.arange(num_blocks, dtype=torch.int32, device=device),
+        paddle.arange(dtype="int32", end=num_blocks),
         seq_lens.to(device),
         num_qo_heads,
         num_kv_heads,
@@ -81,28 +71,24 @@ def run_bench(
         head_dim,
         page_block_size,
         causal=causal,
-        q_data_type=torch.bfloat16,
-        kv_data_type=torch.bfloat16,
+        q_data_type="bfloat16",
+        kv_data_type="bfloat16",
     )
     measurements_new = bench_gpu_time(lambda: wrapper.run(q, kv_data))
     ms_new = np.mean(measurements_new)
-
-    total_bytes = (
-        q.numel() * q.element_size() + kv_data.numel() * kv_data.element_size()
-    )
+    total_bytes = q.size * q.element_size() + kv_data.size * kv_data.element_size()
     mem_MB = total_bytes / 1024**2
-    bw_old = total_bytes / (ms_old * 1e-3) / 1024**3
-    bw_new = total_bytes / (ms_new * 1e-3) / 1024**3
-
+    bw_old = total_bytes / (ms_old * 0.001) / 1024**3
+    bw_new = total_bytes / (ms_new * 0.001) / 1024**3
     return ms_old, ms_new, mem_MB, bw_old, bw_new
 
 
 def synthesize_seq_len_configs() -> List[List[Tuple[int, int]]]:
     cfgs: List[List[Tuple[int, int]]] = [
-        [(8192, 1)] * 128,  # decode-only
-        [(4096, 128)] * 4,  # prefill-only
-        [(600, 1)] * 122 + [(10_000, 17)] * 8,  # hybird
-        [(8192, 1)] * 127 * 2 + [(8192, 4096)] * 1,  # hybrid (chunked-prefill)
+        [(8192, 1)] * 128,
+        [(4096, 128)] * 4,
+        [(600, 1)] * 122 + [(10000, 17)] * 8,
+        [(8192, 1)] * 127 * 2 + [(8192, 4096)] * 1,
     ]
 
     def _rand_case(bsz: int, lo: int, hi: int) -> List[Tuple[int, int]]:
@@ -117,25 +103,21 @@ def synthesize_seq_len_configs() -> List[List[Tuple[int, int]]]:
         return out
 
     cfgs.append(_rand_case(256, 1000, 8192))
-    cfgs.append(_rand_case(128, 2000, 16_000))
+    cfgs.append(_rand_case(128, 2000, 16000))
     return cfgs
 
 
 def main() -> None:
     np.random.seed(42)
-    torch.random.manual_seed(42)
-
+    paddle.seed(seed=42)
     seq_len_cfgs = synthesize_seq_len_configs()
-
     sweep = {
         "page_block_size": (1, 8, 16),
         "head_dim": (64, 128),
         "num_kv_heads": (4,),
         "num_qo_heads": (28,),
     }
-
     records = []
-
     for cfg_id, pairs in enumerate(seq_len_cfgs, start=1):
         kv_lens = [p[0] for p in pairs]
         qo_lens = [p[1] for p in pairs]
@@ -181,7 +163,6 @@ def main() -> None:
                     },
                 ]
             )
-
     df = pd.DataFrame(
         records,
         columns=[

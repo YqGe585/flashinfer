@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,12 +15,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from typing import List, Tuple
 
 import cuda.bindings.driver as driver
 import cuda.bindings.runtime as runtime
-import torch
 from cuda.bindings.driver import CUdevice, CUdevResource
 
 from .cuda_utils import checkCudaErrors
@@ -27,18 +27,18 @@ from .utils import get_compute_capability, round_up
 
 def get_sm_count_constraint(major: int, minor: int) -> Tuple[int, int]:
     if major == 6:
-        return (1, 1)
+        return 1, 1
     elif major == 7:
-        return (2, 2)
+        return 2, 2
     elif major == 8:
-        return (4, 2)
+        return 4, 2
     elif major >= 9:
-        return (8, 8)
+        return 8, 8
     else:
         raise ValueError(f"Unsupported CUDA capability: {major}.{minor}")
 
 
-def get_cudevice(dev: torch.device) -> CUdevice:
+def get_cudevice(dev: str) -> CUdevice:
     try:
         cu_dev = checkCudaErrors(driver.cuDeviceGet(dev.index))
     except RuntimeError:
@@ -56,17 +56,10 @@ def get_device_resource(cu_dev: CUdevice) -> CUdevResource:
 
 
 def split_resource(
-    resource: CUdevResource,
-    num_groups: int,
-    min_count: int,
+    resource: CUdevResource, num_groups: int, min_count: int
 ) -> Tuple[CUdevResource, CUdevResource]:
     results, _, remaining = checkCudaErrors(
-        driver.cuDevSmResourceSplitByCount(
-            num_groups,
-            resource,
-            0,  # useFlags
-            min_count,
-        )
+        driver.cuDevSmResourceSplitByCount(num_groups, resource, 0, min_count)
     )
     return results, remaining
 
@@ -78,7 +71,6 @@ def split_resource_by_sm_count(
     for sm_count in sm_counts:
         result, remaining = split_resource(resource, 1, sm_count)
         results.extend(result)
-        # Refresh the remaining resource for the next iteration
         desc = checkCudaErrors(driver.cuDevResourceGenerateDesc([remaining], 1))
         green_ctx = checkCudaErrors(
             driver.cuGreenCtxCreate(
@@ -90,13 +82,12 @@ def split_resource_by_sm_count(
                 green_ctx, driver.CUdevResourceType.CU_DEV_RESOURCE_TYPE_SM
             )
         )
-
     return results, resource
 
 
 def create_green_ctx_streams(
     cu_dev: CUdevResource, resources: List[CUdevResource]
-) -> List[torch.Stream]:
+>>>>>>) -> List[torch.Stream]:
     streams = []
     for split in resources:
         desc = checkCudaErrors(driver.cuDevResourceGenerateDesc([split], 1))
@@ -107,20 +98,17 @@ def create_green_ctx_streams(
         )
         stream = checkCudaErrors(
             driver.cuGreenCtxStreamCreate(
-                green_ctx,
-                driver.CUstream_flags.CU_STREAM_NON_BLOCKING,
-                0,  # priority
+                green_ctx, driver.CUstream_flags.CU_STREAM_NON_BLOCKING, 0
             )
         )
-        streams.append(torch.cuda.get_stream_from_external(stream))
-
+>>>>>>        streams.append(torch.cuda.get_stream_from_external(stream))
     return streams
 
 
 def split_device_green_ctx(
-    dev: torch.device, num_groups: int, min_count: int
-) -> Tuple[List[torch.Stream], List[CUdevResource]]:
-    r"""
+    dev: str, num_groups: int, min_count: int
+>>>>>>) -> Tuple[List[torch.Stream], List[CUdevResource]]:
+    """
     Split the device into multiple `green contexts <https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html>`_,
     return the corresponding streams and `CUdevResource` for each group and the remaining SMs.
     Green contexts allow concurrent execution of multiple kernels on different SM partitions.
@@ -173,9 +161,9 @@ def split_device_green_ctx(
 
 
 def split_device_green_ctx_by_sm_count(
-    dev: torch.device, sm_counts: List[int]
-) -> Tuple[List[torch.Stream], List[CUdevResource]]:
-    r"""
+    dev: str, sm_counts: List[int]
+>>>>>>) -> Tuple[List[torch.Stream], List[CUdevResource]]:
+    """
     Split the device into multiple green contexts, each with a fixed number of SMs,
     return the corresponding streams and `CUdevResource` for each group and the remaining SMs.
     Green contexts allow concurrent execution of multiple kernels on different SM partitions.
@@ -237,8 +225,6 @@ def split_device_green_ctx_by_sm_count(
     """
     cu_dev = get_cudevice(dev)
     resource = get_device_resource(cu_dev)
-
-    # Round sm counts to meet the alignment and granularity requirements
     rounded_sm_counts = []
     for sm_count in sm_counts:
         min_sm_count, sm_alignment = get_sm_count_constraint(
@@ -247,8 +233,6 @@ def split_device_green_ctx_by_sm_count(
         if sm_count <= 0:
             raise ValueError(f"SM count must be positive, got {sm_count}")
         rounded_sm_counts.append(round_up(max(sm_count, min_sm_count), sm_alignment))
-
-    # Split the device into multiple green contexts
     results, remaining = split_resource_by_sm_count(cu_dev, resource, rounded_sm_counts)
     resources = results + [remaining]
     streams = create_green_ctx_streams(cu_dev, resources)

@@ -1,5 +1,5 @@
 import numpy as np
-import torch
+import paddle
 
 import flashinfer
 from flashinfer.testing.utils import bench_gpu_time
@@ -7,7 +7,7 @@ from flashinfer.testing.utils import bench_gpu_time
 
 def normal_distribution(std):
     def normal_noise(shape, device):
-        return torch.randn(shape, device=device) * std
+        return paddle.randn(shape=shape) * std
 
     normal_noise.__name__ = f"normal_distribution(std={std})"
     return normal_noise
@@ -15,42 +15,42 @@ def normal_distribution(std):
 
 def gumbel_distribution(beta):
     def gumbel_noise(shape, device):
-        U = torch.rand(shape, device=device)
+        U = paddle.rand(shape=shape)
         eps = 1e-20
-        return torch.log(-torch.log(U + eps) + eps) / beta
+        return paddle.log(x=-paddle.log(x=U + eps) + eps) / beta
 
     gumbel_noise.__name__ = f"gumbel_distribution(beta={beta})"
     return gumbel_noise
 
 
 def init_seed_sampling(*args, **kwargs):
-    torch.manual_seed(42)
+    paddle.seed(seed=42)
     return flashinfer.sampling.sampling_from_probs(*args, **kwargs)
 
 
 def init_seed_sampling_from_logits(*args, **kwargs):
-    torch.manual_seed(42)
+    paddle.seed(seed=42)
     return flashinfer.sampling.sampling_from_logits(*args, **kwargs)
 
 
 def init_seed_sampling_from_softmax_logits(logits, *args, **kwargs):
-    torch.manual_seed(42)
+    paddle.seed(seed=42)
     return flashinfer.sampling.sampling_from_probs(
-        torch.softmax(logits, dim=-1), *args, **kwargs
+        paddle.nn.functional.softmax(x=logits, axis=-1), *args, **kwargs
     )
 
 
 def init_seed_top_k_sampling(*args, **kwargs):
-    torch.manual_seed(42)
+    paddle.seed(seed=42)
     return flashinfer.sampling.top_k_sampling_from_probs(*args, **kwargs)
 
 
 def init_seed_top_p_sampling(*args, **kwargs):
-    torch.manual_seed(42)
+    paddle.seed(seed=42)
     return flashinfer.sampling.top_p_sampling_from_probs(*args, **kwargs)
 
 
-@torch.inference_mode()
+@paddle.no_grad()
 def main():
     print("---")
     print("naive sampling")
@@ -64,26 +64,22 @@ def main():
             ]:
                 for deterministic in [True, False]:
                     logits = distrib((batch_size, vocab_size), device="cuda")
-                    probs = torch.softmax(logits, dim=-1)
-                    samples = torch.zeros(
-                        batch_size, dtype=torch.int32, device=probs.device
-                    )
+                    probs = paddle.nn.functional.softmax(x=logits, axis=-1)
+                    samples = paddle.zeros(shape=batch_size, dtype="int32")
                     measurements = bench_gpu_time(
                         lambda: init_seed_sampling(probs, deterministic=deterministic),
                         dry_run_time_ms=100,
                         repeat_time_ms=1000,
                     )
                     ms = np.median(measurements)
-
                     io = (
-                        probs.numel() * probs.element_size()
-                        + samples.numel() * samples.element_size()
+                        probs.size * probs.element_size()
+                        + samples.size * samples.element_size()
                     )
-                    bandwidth = io * 1e-6 / ms
+                    bandwidth = io * 1e-06 / ms
                     print(
-                        f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, duration: {ms * 1e3:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
+                        f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, duration: {ms * 1000.0:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
                     )
-
     print("---")
     print("top-k sampling")
     for vocab_size in [128512]:
@@ -97,10 +93,8 @@ def main():
                 for deterministic in [True, False]:
                     for k in [10, 100, 1000, 5000]:
                         logits = distrib((batch_size, vocab_size), device="cuda")
-                        probs = torch.softmax(logits, dim=-1)
-                        samples = torch.zeros(
-                            batch_size, dtype=torch.int32, device=probs.device
-                        )
+                        probs = paddle.nn.functional.softmax(x=logits, axis=-1)
+                        samples = paddle.zeros(shape=batch_size, dtype="int32")
                         measurements = bench_gpu_time(
                             lambda: init_seed_top_k_sampling(
                                 probs, k, deterministic=deterministic
@@ -109,19 +103,16 @@ def main():
                             repeat_time_ms=1000,
                         )
                         ms = np.median(measurements)
-
                         io = (
-                            probs.numel() * probs.element_size()
-                            + samples.numel() * samples.element_size()
+                            probs.size * probs.element_size()
+                            + samples.size * samples.element_size()
                         )
-                        bandwidth = io * 1e-6 / ms
+                        bandwidth = io * 1e-06 / ms
                         print(
-                            f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, k: {k}, duration: {ms * 1e3:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
+                            f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, k: {k}, duration: {ms * 1000.0:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
                         )
-
     print("---")
     print("top-p sampling")
-
     for vocab_size in [128512]:
         for batch_size in [1, 16, 32, 64, 128, 256, 512]:
             for distrib in [
@@ -133,10 +124,8 @@ def main():
                 for deterministic in [True, False]:
                     for p in [0.1, 0.5, 0.9]:
                         logits = distrib((batch_size, vocab_size), device="cuda")
-                        probs = torch.softmax(logits, dim=-1)
-                        samples = torch.zeros(
-                            batch_size, dtype=torch.int32, device=probs.device
-                        )
+                        probs = paddle.nn.functional.softmax(x=logits, axis=-1)
+                        samples = paddle.zeros(shape=batch_size, dtype="int32")
                         measurements = bench_gpu_time(
                             lambda: init_seed_top_p_sampling(
                                 probs, p, deterministic=deterministic
@@ -145,16 +134,14 @@ def main():
                             repeat_time_ms=1000,
                         )
                         ms = np.median(measurements)
-
                         io = (
-                            probs.numel() * probs.element_size()
-                            + samples.numel() * samples.element_size()
+                            probs.size * probs.element_size()
+                            + samples.size * samples.element_size()
                         )
-                        bandwidth = io * 1e-6 / ms
+                        bandwidth = io * 1e-06 / ms
                         print(
-                            f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, p: {p}, duration: {ms * 1e3:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
+                            f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, p: {p}, duration: {ms * 1000.0:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
                         )
-
     print("---")
     print("sampling from softmax(logits)")
     for vocab_size in [128512]:
@@ -167,9 +154,7 @@ def main():
             ]:
                 for deterministic in [True, False]:
                     logits = distrib((batch_size, vocab_size), device="cuda")
-                    samples = torch.zeros(
-                        batch_size, dtype=torch.int32, device=logits.device
-                    )
+                    samples = paddle.zeros(shape=batch_size, dtype="int32")
                     measurements = bench_gpu_time(
                         lambda: init_seed_sampling_from_softmax_logits(
                             logits, samples, deterministic=deterministic
@@ -179,14 +164,13 @@ def main():
                     )
                     ms = np.median(measurements)
                     io = (
-                        logits.numel() * logits.element_size()
-                        + samples.numel() * samples.element_size()
+                        logits.size * logits.element_size()
+                        + samples.size * samples.element_size()
                     )
-                    bandwidth = io * 1e-6 / ms
+                    bandwidth = io * 1e-06 / ms
                     print(
-                        f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, duration: {ms * 1e3:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
+                        f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, duration: {ms * 1000.0:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
                     )
-
     print("---")
     print("sampling from logits")
     for vocab_size in [128512]:
@@ -199,9 +183,7 @@ def main():
             ]:
                 for deterministic in [True, False]:
                     logits = distrib((batch_size, vocab_size), device="cuda")
-                    samples = torch.zeros(
-                        batch_size, dtype=torch.int32, device=logits.device
-                    )
+                    samples = paddle.zeros(shape=batch_size, dtype="int32")
                     measurements = bench_gpu_time(
                         lambda: init_seed_sampling_from_logits(
                             logits, samples, deterministic=deterministic
@@ -210,14 +192,13 @@ def main():
                         repeat_time_ms=1000,
                     )
                     ms = np.median(measurements)
-
                     io = (
-                        logits.numel() * logits.element_size()
-                        + samples.numel() * samples.element_size()
+                        logits.size * logits.element_size()
+                        + samples.size * samples.element_size()
                     )
-                    bandwidth = io * 1e-6 / ms
+                    bandwidth = io * 1e-06 / ms
                     print(
-                        f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, duration: {ms * 1e3:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
+                        f"vocab_size: {vocab_size}, batch_size: {batch_size}, distrib: {distrib.__name__}, deterministic: {deterministic}, duration: {ms * 1000.0:.2f} us, effective bandwidth: {bandwidth:.2f} GB/s"
                     )
 
 

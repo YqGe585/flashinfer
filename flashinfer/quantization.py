@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,11 +15,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from typing import Tuple
-
-import torch
 
 from .jit import JitSpec
 from .jit import env as jit_env
@@ -41,21 +40,21 @@ def get_quantization_module():
 
 
 @register_custom_op("flashinfer::packbits", mutates_args=())
-def _packbits(x: torch.Tensor, bitorder: str) -> torch.Tensor:
-    device = x.device
-    x = x.to(torch.bool)
-    y = torch.empty((x.size(0) + 7) // 8, dtype=torch.uint8, device=device)
+def _packbits(x: paddle.Tensor, bitorder: str) -> paddle.Tensor:
+    device = x.place
+    x = x.to("bool")
+    y = paddle.empty(shape=(x.shape[0] + 7) // 8, dtype="uint8")
     get_quantization_module().packbits(x, bitorder, y)
     return y
 
 
 @register_fake_op("flashinfer::packbits")
-def _fake_packbits(x: torch.Tensor, bitorder: str) -> torch.Tensor:
-    return torch.empty((x.size(0) + 7) // 8, dtype=torch.uint8, device=x.device)
+def _fake_packbits(x: paddle.Tensor, bitorder: str) -> paddle.Tensor:
+    return paddle.empty(shape=(x.shape[0] + 7) // 8, dtype="uint8")
 
 
-def packbits(x: torch.Tensor, bitorder: str = "big") -> torch.Tensor:
-    r"""Pack the elements of a binary-valued array into bits in a uint8 array.
+def packbits(x: paddle.Tensor, bitorder: str = "big") -> paddle.Tensor:
+    """Pack the elements of a binary-valued array into bits in a uint8 array.
 
     The semantics of this function is the same as `numpy.packbits <https://numpy.org/doc/stable/reference/generated/numpy.packbits.html>`_.
 
@@ -89,9 +88,9 @@ def packbits(x: torch.Tensor, bitorder: str = "big") -> torch.Tensor:
 
 
 def segment_packbits(
-    x: torch.Tensor, indptr: torch.Tensor, bitorder: str = "big"
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""Pack a batch of binary-valued segments into bits in a uint8 array.
+    x: paddle.Tensor, indptr: paddle.Tensor, bitorder: str = "big"
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    """Pack a batch of binary-valued segments into bits in a uint8 array.
 
     For each segment, the semantics of this function is the same as `numpy.packbits <https://numpy.org/doc/stable/reference/generated/numpy.packbits.html>`_.
 
@@ -136,13 +135,12 @@ def segment_packbits(
     """
     seglen = indptr[1:] - indptr[:-1]
     packed_len = (seglen + 7) // 8
-    indptr_new = torch.zeros(len(indptr), dtype=indptr.dtype, device=indptr.device)
-    indptr_new[1:] = torch.cumsum(packed_len, 0)
+    indptr_new = paddle.zeros(shape=len(indptr), dtype=indptr.dtype)
+    indptr_new[1:] = paddle.cumsum(x=packed_len, axis=0)
     output_nnzs = indptr_new[-1].item()
-
-    device = x.device
-    indptr = indptr.to(torch.int32)
-    indptr_new = indptr_new.to(torch.int32)
-    y = torch.empty(output_nnzs, dtype=torch.uint8, device=device)
+    device = x.place
+    indptr = indptr.to("int32")
+    indptr_new = indptr_new.to("int32")
+    y = paddle.empty(shape=output_nnzs, dtype="uint8")
     get_quantization_module().segment_packbits(x, indptr, indptr_new, bitorder, y)
     return y, indptr_new

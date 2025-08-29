@@ -1,3 +1,5 @@
+import os
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,13 +15,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import requests  # type: ignore[import-untyped]
+import requests
 
 from .jit.core import logger
 from .jit.cubin_loader import FLASHINFER_CUBINS_REPOSITORY, get_cubin
@@ -30,15 +30,13 @@ def get_available_cubin_files(source, retries=3, delay=5, timeout=10):
         try:
             response = requests.get(source, timeout=timeout)
             response.raise_for_status()
-            hrefs = re.findall(r'\<a href=".*\.cubin">', response.text)
+            hrefs = re.findall('\\<a href=".*\\.cubin">', response.text)
             files = [(h[9:-8], ".cubin") for h in hrefs]
             return files
-
         except requests.exceptions.RequestException as e:
             logger.warning(
                 f"Fetching available files {source}: attempt {attempt} failed: {e}"
             )
-
             if attempt < retries:
                 logger.info(f"Retrying in {delay} seconds...")
                 time.sleep(delay)
@@ -106,5 +104,4 @@ def download_artifacts() -> bool:
         os.environ.pop("FLASHINFER_CUBIN_CHECKSUM_DISABLED")
     else:
         os.environ["FLASHINFER_CUBIN_CHECKSUM_DISABLED"] = env_backup
-
     return all_success

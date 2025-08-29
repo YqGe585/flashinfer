@@ -1,26 +1,25 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 This is the test file for MaskedBatchedMatmulCuteDSL kernel.
 `test_blockscaled_gemm_python_interface` is the python interface test. For pytorch DLFW, refer to this.
 """
-
 from typing import Tuple
 
 import cutlass
 import cutlass.cute as cute
 import cutlass.torch as cutlass_torch
 import pytest
-import torch
 from cutlass.cute.runtime import from_dlpack
 
 from flashinfer.cute_dsl.blockscaled_gemm import (
-    Sm100BlockScaledPersistentDenseGemmKernel,  # not used in python interface
-    grouped_gemm_nt_masked,  # deepgemm-like python interface for DLFW integration
-    create_scale_factor_tensor,
-)
-from flashinfer.cute_dsl.utils import (
-    get_cutlass_dtype,
-    is_cute_dsl_available,
-)
+    Sm100BlockScaledPersistentDenseGemmKernel, create_scale_factor_tensor,
+    grouped_gemm_nt_masked)
+from flashinfer.cute_dsl.utils import get_cutlass_dtype, is_cute_dsl_available
 
 
 @pytest.mark.skipif(
@@ -57,7 +56,7 @@ from flashinfer.cute_dsl.utils import (
 @pytest.mark.parametrize("mma_tiler_mn", [(128, 128)])
 @pytest.mark.parametrize("cluster_shape_mn", [(1, 1)])
 @pytest.mark.parametrize("sm_count", [132, None])
-@pytest.mark.parametrize("tolerance", [1e-01])
+@pytest.mark.parametrize("tolerance", [0.1])
 @pytest.mark.parametrize("iterations", [3])
 def test_blockscaled_gemm_python_interface(
     lm: Tuple[int, int],
@@ -77,8 +76,8 @@ def test_blockscaled_gemm_python_interface(
     tolerance: float,
     iterations: int,
 ):
-    torch.manual_seed(42)
-    device = torch.device("cuda:0")
+    paddle.seed(seed=42)
+    device = device2str("cuda:0")
     l, m = lm
     k, n = kn
     if not Sm100BlockScaledPersistentDenseGemmKernel.can_implement(
@@ -99,13 +98,10 @@ def test_blockscaled_gemm_python_interface(
         pytest.skip(
             f"Unsupported testcase {ab_dtype}, {sf_dtype}, {sf_vec_size}, {c_dtype},  {mma_tiler_mn}, {cluster_shape_mn}, {m}, {n}, {k}, {l}, {a_major}, {b_major}, {c_major}"
         )
-
     if not (a_major == "k" and b_major == "k" and c_major == "n"):
-        # not supported since we try to align deepgemm for now
         pytest.skip(
             f"Skip non deepgemm-like cases {a_major}, {b_major}, {c_major}. Might be added later"
         )
-
     a_ref = cutlass_torch.matrix(
         l, m, k, a_major == "m", cutlass.Float32, device=device
     )
@@ -115,59 +111,41 @@ def test_blockscaled_gemm_python_interface(
     c_ref = cutlass_torch.matrix(
         l, m, n, c_major == "m", cutlass.Float32, device=device
     )
-
     a_tensor, a_torch = cutlass_torch.cute_tensor_like(
-        a_ref,
-        get_cutlass_dtype(ab_dtype),
-        is_dynamic_layout=True,
-        assumed_align=16,
+        a_ref, get_cutlass_dtype(ab_dtype), is_dynamic_layout=True, assumed_align=16
     )
     b_tensor, b_torch = cutlass_torch.cute_tensor_like(
-        b_ref,
-        get_cutlass_dtype(ab_dtype),
-        is_dynamic_layout=True,
-        assumed_align=16,
+        b_ref, get_cutlass_dtype(ab_dtype), is_dynamic_layout=True, assumed_align=16
     )
     c_tensor, c_torch = cutlass_torch.cute_tensor_like(
-        c_ref,
-        get_cutlass_dtype(c_dtype),
-        is_dynamic_layout=True,
-        assumed_align=16,
+        c_ref, get_cutlass_dtype(c_dtype), is_dynamic_layout=True, assumed_align=16
     )
-    alpha_tensor = (
-        torch.randn(l, dtype=torch.float32, device=device) if fuse_alpha else None
-    )
-
-    # for deepgemm-like python interface
+    alpha_tensor = paddle.randn(shape=l, dtype="float32") if fuse_alpha else None
     if ab_dtype == "float4_e2m1fn":
-        m, k, l = a_torch.shape
-        n, k, l = b_torch.shape
-        # slice into half after flatten
-        half_len_a = a_torch.numel() // 2
-        half_len_b = b_torch.numel() // 2
+        m, k, l = tuple(a_torch.shape)
+        n, k, l = tuple(b_torch.shape)
+        half_len_a = a_torch.size // 2
+        half_len_b = b_torch.size // 2
         a_torch = (
-            a_torch.permute(2, 0, 1)
+            a_torch.transpose(perm=[2, 0, 1])
             .flatten()[:half_len_a]
             .reshape(l, m, k // 2)
-            .permute(1, 2, 0)
+            .transpose(perm=[1, 2, 0])
         )
         b_torch = (
-            b_torch.permute(2, 0, 1)
+            b_torch.transpose(perm=[2, 0, 1])
             .flatten()[:half_len_b]
             .reshape(l, n, k // 2)
-            .permute(1, 2, 0)
+            .transpose(perm=[1, 2, 0])
         )
-
     sfa_ref, sfa_tensor, sfa_torch = create_scale_factor_tensor(
         l, m, k, sf_vec_size, get_cutlass_dtype(sf_dtype), device
     )
     sfb_ref, sfb_tensor, sfb_torch = create_scale_factor_tensor(
         l, n, k, sf_vec_size, get_cutlass_dtype(sf_dtype), device
     )
-    masked_m_tensor = torch.randint(0, m, (l,), dtype=torch.int32, device=device)
-
+    masked_m_tensor = paddle.randint(low=0, high=m, shape=(l,), dtype="int32")
     for _ in range(iterations):
-        # deepgemm-like python interface: fp4 packed, for DLFW integration
         grouped_gemm_nt_masked(
             (a_torch, sfa_torch),
             (b_torch, sfb_torch),
@@ -183,55 +161,45 @@ def test_blockscaled_gemm_python_interface(
             alpha_dtype=alpha_dtype,
             sm_count=sm_count,
         )
-
-    # compute ref output
     if not fuse_alpha:
-        alpha_tensor = torch.ones(l, dtype=torch.float32, device=device)
-    res_a = torch.einsum("mkl,mkl->mkl", a_ref, sfa_ref)
-    res_b = torch.einsum("nkl,nkl->nkl", b_ref, sfb_ref)
-    ref = torch.einsum("mkl,nkl->mnl", res_a, res_b)
-    ref = torch.einsum("mnl,l->mnl", ref, alpha_tensor)
-
-    # Convert c back to f32 for comparison.
+        alpha_tensor = paddle.ones(shape=l, dtype="float32")
+    res_a = paddle.einsum("mkl,mkl->mkl", a_ref, sfa_ref)
+    res_b = paddle.einsum("nkl,nkl->nkl", b_ref, sfb_ref)
+    ref = paddle.einsum("mkl,nkl->mnl", res_a, res_b)
+    ref = paddle.einsum("mnl,l->mnl", ref, alpha_tensor)
     cute.testing.convert(
         c_tensor,
         from_dlpack(c_ref, assumed_align=16).mark_layout_dynamic(
-            leading_dim=(1 if c_major == "n" else 0)
+            leading_dim=1 if c_major == "n" else 0
         ),
     )
-
     if c_dtype in ("float32", "float16", "bfloat16"):
         for i in range(l):
-            # skip testing c_ref & ref
-            torch.testing.assert_close(
-                c_ref[: masked_m_tensor[i].item(), :, i],
-                ref[: masked_m_tensor[i].item(), :, i],
+            assert paddle.allclose(
+                x=c_ref[: masked_m_tensor[i].item(), :, i],
+                y=ref[: masked_m_tensor[i].item(), :, i],
                 atol=tolerance,
-                rtol=1e-02,
-            )
+                rtol=0.01,
+            ).item(), ""
     elif c_dtype in ("float8_e5m2", "float8_e4m3fn"):
-        # Convert ref : f32 -> f8 -> f32
-        ref_f8_ = torch.empty(*(l, m, n), dtype=torch.uint8, device=device).permute(
-            1, 2, 0
-        )
+        ref_f8_ = paddle.empty(shape=(l, m, n), dtype="uint8").transpose(perm=[1, 2, 0])
         ref_f8 = from_dlpack(ref_f8_, assumed_align=16).mark_layout_dynamic(
             leading_dim=1
         )
         ref_f8.element_type = get_cutlass_dtype(c_dtype)
-        ref = ref.permute(2, 0, 1).contiguous().permute(1, 2, 0)
+        ref = ref.transpose(perm=[2, 0, 1]).contiguous().transpose(perm=[1, 2, 0])
         ref_tensor = from_dlpack(ref, assumed_align=16).mark_layout_dynamic(
             leading_dim=1
         )
         cute.testing.convert(ref_tensor, ref_f8)
         cute.testing.convert(ref_f8, ref_tensor)
         for i in range(l):
-            # skip testing c_ref & ref
-            torch.testing.assert_close(
-                c_ref[: masked_m_tensor[i].item(), :, i],
-                ref[: masked_m_tensor[i].item(), :, i],
+            assert paddle.allclose(
+                x=c_ref[: masked_m_tensor[i].item(), :, i],
+                y=ref[: masked_m_tensor[i].item(), :, i],
                 atol=tolerance,
-                rtol=1e-02,
-            )
+                rtol=0.01,
+            ).item(), ""
 
 
 if __name__ == "__main__":
@@ -249,7 +217,7 @@ if __name__ == "__main__":
         alpha_dtype="float32",
         mma_tiler_mn=(128, 128),
         cluster_shape_mn=(2, 1),
-        tolerance=1e-01,
+        tolerance=0.1,
         iterations=3,
         sm_count=132,
     )

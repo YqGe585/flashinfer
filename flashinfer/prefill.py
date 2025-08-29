@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,59 +19,36 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 import logging
 import math
 from types import SimpleNamespace
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
 
-import torch
-
-from .jit import (
-    gen_batch_prefill_module,
-    gen_customize_batch_prefill_module,
-    gen_fmha_cutlass_sm100a_module,
-    gen_single_prefill_module,
-    get_batch_prefill_uri,
-    get_single_prefill_uri,
-    setup_cubin_loader,
-    trtllm_gen_fmha_module,
-)
 from .cudnn import cudnn_batch_prefill_with_kv_cache
+from .jit import (gen_batch_prefill_module, gen_customize_batch_prefill_module,
+                  gen_fmha_cutlass_sm100a_module, gen_single_prefill_module,
+                  get_batch_prefill_uri, get_single_prefill_uri,
+                  setup_cubin_loader, trtllm_gen_fmha_module)
 from .page import block_sparse_indices_to_vector_sparse_offsets, get_seq_lens
 from .quantization import packbits, segment_packbits
-from .utils import (
-    FP4Tensor,
-    MaskMode,
-    PosEncodingMode,
-    TensorLayout,
-    _check_cached_qkv_data_type,
-    _check_kv_layout,
-    _check_pos_encoding_mode,
-    check_shape_dtype_device,
-    _get_cache_alibi_slopes_buf,
-    _get_cache_buf,
-    _unpack_paged_kv_cache,
-    canonicalize_torch_dtype,
-    determine_attention_backend,
-    device_support_pdl,
-    get_device_sm_count,
-    is_float8,
-    is_sm100a_supported,
-    register_custom_op,
-    register_fake_op,
-    ceil_div,
-    round_up,
-)
+from .utils import (FP4Tensor, MaskMode, PosEncodingMode, TensorLayout,
+                    _check_cached_qkv_data_type, _check_kv_layout,
+                    _check_pos_encoding_mode, _get_cache_alibi_slopes_buf,
+                    _get_cache_buf, _unpack_paged_kv_cache,
+                    canonicalize_torch_dtype, ceil_div,
+                    check_shape_dtype_device, determine_attention_backend,
+                    device_support_pdl, get_device_sm_count, is_float8,
+                    is_sm100a_supported, register_custom_op, register_fake_op,
+                    round_up)
 
 
 @functools.cache
 def get_fmha_module(
-    dtype_q: torch.dtype,
-    dtype_kv: torch.dtype,
-    dtype_o: torch.dtype,
-    dtype_idx: torch.dtype,
+    dtype_q: paddle.dtype,
+    dtype_kv: paddle.dtype,
+    dtype_o: paddle.dtype,
+    dtype_idx: paddle.dtype,
     head_dim_qk: int,
     head_dim_vo: int,
     pos_encoding_mode: int,
@@ -73,7 +56,7 @@ def get_fmha_module(
     use_logits_soft_cap: bool,
     use_fp16_qk_reduction: bool = False,
 ):
-    if is_sm100a_supported(torch.device("cuda")):
+    if is_sm100a_supported(device2str("cuda")):
         return gen_fmha_cutlass_sm100a_module(
             dtype_q,
             dtype_kv,
@@ -101,21 +84,18 @@ def make_hashable_cache(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        # Convert unhashable arguments to hashable ones
         hashable_args = []
         for arg in args:
             if isinstance(arg, list):
                 hashable_args.append(tuple(arg))
             else:
                 hashable_args.append(arg)
-
         hashable_kwargs = {}
         for key, value in kwargs.items():
             if isinstance(value, list):
                 hashable_kwargs[key] = tuple(value)
             else:
                 hashable_kwargs[key] = value
-
         return cached_wrapper(*hashable_args, **hashable_kwargs)
 
     return wrapper
@@ -125,10 +105,10 @@ def make_hashable_cache(func):
 def get_customize_batch_prefill_module(
     backend: str,
     uri: str,
-    dtype_q: torch.dtype,
-    dtype_kv: torch.dtype,
-    dtype_o: torch.dtype,
-    idtype: torch.dtype,
+    dtype_q: paddle.dtype,
+    dtype_kv: paddle.dtype,
+    dtype_o: paddle.dtype,
+    idtype: paddle.dtype,
     head_dim_qk: int,
     head_dim_vo: int,
     additional_tensor_names: List[str],
@@ -173,30 +153,30 @@ def get_trtllm_gen_prefill_module():
     setup_cubin_loader(mod.get_library_path())
 
     def _paged_run(
-        query: torch.Tensor,
-        k_cache: torch.Tensor,
-        v_cache: torch.Tensor,
-        workspace_buffer: torch.Tensor,
-        block_tables: torch.Tensor,
-        seq_lens: torch.Tensor,
+        query: paddle.Tensor,
+        k_cache: paddle.Tensor,
+        v_cache: paddle.Tensor,
+        workspace_buffer: paddle.Tensor,
+        block_tables: paddle.Tensor,
+        seq_lens: paddle.Tensor,
         max_q_len: int,
         max_kv_len: int,
         bmm1_scale: float,
         bmm2_scale: float,
         batch_size: int,
-        cum_seq_lens_q: torch.Tensor,
-        cum_seq_lens_kv: torch.Tensor,
+        cum_seq_lens_q: paddle.Tensor,
+        cum_seq_lens_kv: paddle.Tensor,
         enable_pdl: bool,
         window_left: int = -1,
-        out: Optional[torch.Tensor] = None,
-        sinks: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        sm_count = get_device_sm_count(query.device)
+        out: Optional[paddle.Tensor] = None,
+        sinks: Optional[paddle.Tensor] = None,
+    ) -> paddle.Tensor:
+        sm_count = get_device_sm_count(query.place)
         if out is None:
-            out = torch.empty_like(query)
+            out = paddle.empty_like(x=query)
         op.trtllm_paged_attention_context(
             out,
-            None,  # fp4 output not supported in wrapper api yet.
+            None,
             query,
             k_cache,
             v_cache,
@@ -207,9 +187,9 @@ def get_trtllm_gen_prefill_module():
             max_kv_len,
             bmm1_scale,
             bmm2_scale,
-            -1,  # o_sf_scale
-            -1,  # o_sf_vec_size
-            0,  # o_sf_start_index
+            -1,
+            -1,
+            0,
             batch_size,
             window_left,
             cum_seq_lens_q,
@@ -221,8 +201,6 @@ def get_trtllm_gen_prefill_module():
         return out
 
     def _ragged_run(*args, **kwargs):
-        # TODO(Zihao): trtllm-gen backend already supports variable length attention,
-        # but not integrated into flashinfer yet.
         raise NotImplementedError(
             "Variable length is not implemented for trtllm-gen backend yet."
         )
@@ -230,11 +208,7 @@ def get_trtllm_gen_prefill_module():
     def _plan(*args, **kwargs):
         pass
 
-    return SimpleNamespace(
-        paged_run=_paged_run,
-        ragged_run=_ragged_run,
-        plan=_plan,
-    )
+    return SimpleNamespace(paged_run=_paged_run, ragged_run=_ragged_run, plan=_plan)
 
 
 @functools.cache
@@ -243,28 +217,26 @@ def get_single_prefill_module(backend, *args):
     module = gen_single_prefill_module(backend, *args).build_and_load()
     run_func = module.run.default
 
-    # torch library for single_prefill_with_kv_cache
-
     @register_custom_op(
         f"flashinfer::{uri}_run", mutates_args=("tmp", "o", "maybe_lse")
     )
     def run_single_prefill(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        tmp: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        tmp: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
-        maybe_packed_custom_mask: Optional[torch.Tensor],
-        maybe_alibi_slopes: Optional[torch.Tensor],
+        maybe_packed_custom_mask: Optional[paddle.Tensor],
+        maybe_alibi_slopes: Optional[paddle.Tensor],
         logits_soft_cap: float,
         sm_scale: float,
-        scale_q: Optional[torch.Tensor],
-        scale_k: Optional[torch.Tensor],
-        scale_v: Optional[torch.Tensor],
+        scale_q: Optional[paddle.Tensor],
+        scale_k: Optional[paddle.Tensor],
+        scale_v: Optional[paddle.Tensor],
         rope_scale: float,
         rope_theta: float,
     ) -> None:
@@ -284,7 +256,6 @@ def get_single_prefill_module(backend, *args):
                     sm_scale,
                 )
             else:
-                # FP8 enabled
                 run_func(
                     q,
                     k,
@@ -315,24 +286,24 @@ def get_single_prefill_module(backend, *args):
                 maybe_alibi_slopes,
                 logits_soft_cap,
                 sm_scale,
-                1.0 / rope_scale,  # rope_rcp_scale
-                1.0 / rope_theta,  # rope_rcp_theta
+                1.0 / rope_scale,
+                1.0 / rope_theta,
             )
         return o
 
     @register_fake_op(f"flashinfer::{uri}_run")
     def _fake_run_single_prefill(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        tmp: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        tmp: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
-        maybe_packed_custom_mask: Optional[torch.Tensor],
-        maybe_alibi_slopes: Optional[torch.Tensor],
+        maybe_packed_custom_mask: Optional[paddle.Tensor],
+        maybe_alibi_slopes: Optional[paddle.Tensor],
         logits_soft_cap: float,
         sm_scale: float,
         rope_scale: float,
@@ -340,7 +311,6 @@ def get_single_prefill_module(backend, *args):
     ) -> None:
         pass
 
-    # Register the module
     return SimpleNamespace(run=run_single_prefill)
 
 
@@ -359,8 +329,6 @@ def get_batch_prefill_module(backend, *args):
         ragged_run_func = module.ragged_run.default
         paged_run_func = module.paged_run.default
 
-    # torch library for ragged_run
-
     @register_custom_op(
         f"flashinfer::{uri}_ragged_run",
         mutates_args=(
@@ -371,26 +339,26 @@ def get_batch_prefill_module(backend, *args):
         ),
     )
     def ragged_run(
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
         plan_info_vec: List[int],
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        qo_indptr: torch.Tensor,
-        kv_indptr: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        qo_indptr: paddle.Tensor,
+        kv_indptr: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
         enable_pdl: bool,
-        maybe_custom_mask: Optional[torch.Tensor],
-        maybe_mask_indptr: Optional[torch.Tensor],
-        maybe_alibi_slopes: Optional[torch.Tensor],
-        maybe_prefix_len_ptr: Optional[torch.Tensor],
-        maybe_token_pos_in_items_ptr: Optional[torch.Tensor],
-        maybe_max_item_len_ptr: Optional[torch.Tensor],
+        maybe_custom_mask: Optional[paddle.Tensor],
+        maybe_mask_indptr: Optional[paddle.Tensor],
+        maybe_alibi_slopes: Optional[paddle.Tensor],
+        maybe_prefix_len_ptr: Optional[paddle.Tensor],
+        maybe_token_pos_in_items_ptr: Optional[paddle.Tensor],
+        maybe_max_item_len_ptr: Optional[paddle.Tensor],
         logits_soft_cap: float,
         sm_scale: float,
         rope_scale: float,
@@ -421,8 +389,8 @@ def get_batch_prefill_module(backend, *args):
                 maybe_max_item_len_ptr,
                 logits_soft_cap,
                 sm_scale,
-                1.0 / rope_scale,  # rope_rcp_scale
-                1.0 / rope_theta,  # rope_rcp_theta
+                1.0 / rope_scale,
+                1.0 / rope_theta,
                 token_pos_in_items_len,
             )
         else:
@@ -448,31 +416,30 @@ def get_batch_prefill_module(backend, *args):
                 sm_scale,
                 token_pos_in_items_len,
             )
-
         return o
 
     @register_fake_op(f"flashinfer::{uri}_ragged_run")
     def _fake_ragged_run(
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
         plan_info_vec: List[int],
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        qo_indptr: torch.Tensor,
-        kv_indptr: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        qo_indptr: paddle.Tensor,
+        kv_indptr: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
         enable_pdl: bool,
-        maybe_custom_mask: Optional[torch.Tensor],
-        maybe_mask_indptr: Optional[torch.Tensor],
-        maybe_alibi_slopes: Optional[torch.Tensor],
-        maybe_prefix_len_ptr: Optional[torch.Tensor],
-        maybe_token_pos_in_items_ptr: Optional[torch.Tensor],
-        maybe_max_item_len_ptr: Optional[torch.Tensor],
+        maybe_custom_mask: Optional[paddle.Tensor],
+        maybe_mask_indptr: Optional[paddle.Tensor],
+        maybe_alibi_slopes: Optional[paddle.Tensor],
+        maybe_prefix_len_ptr: Optional[paddle.Tensor],
+        maybe_token_pos_in_items_ptr: Optional[paddle.Tensor],
+        maybe_max_item_len_ptr: Optional[paddle.Tensor],
         logits_soft_cap: float,
         sm_scale: float,
         rope_scale: float,
@@ -480,8 +447,6 @@ def get_batch_prefill_module(backend, *args):
         token_pos_in_items_len: int,
     ) -> None:
         pass
-
-    # torch library for paged_run
 
     @register_custom_op(
         f"flashinfer::{uri}_paged_run",
@@ -495,47 +460,47 @@ def get_batch_prefill_module(backend, *args):
         ),
     )
     def paged_run(
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
         plan_info_vec: List[int],
-        q: torch.Tensor,
-        paged_k_cache: torch.Tensor,
-        paged_v_cache: torch.Tensor,
-        qo_indptr: torch.Tensor,
-        paged_kv_indptr: torch.Tensor,
-        paged_kv_indices: torch.Tensor,
-        paged_kv_last_page_len: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        paged_k_cache: paddle.Tensor,
+        paged_v_cache: paddle.Tensor,
+        qo_indptr: paddle.Tensor,
+        paged_kv_indptr: paddle.Tensor,
+        paged_kv_indices: paddle.Tensor,
+        paged_kv_last_page_len: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
         enable_pdl: bool,
-        maybe_custom_mask: Optional[torch.Tensor],
-        maybe_mask_indptr: Optional[torch.Tensor],
-        maybe_alibi_slopes: Optional[torch.Tensor],
-        maybe_prefix_len_ptr: Optional[torch.Tensor],
-        maybe_token_pos_in_items_ptr: Optional[torch.Tensor],
-        maybe_max_item_len_ptr: Optional[torch.Tensor],
+        maybe_custom_mask: Optional[paddle.Tensor],
+        maybe_mask_indptr: Optional[paddle.Tensor],
+        maybe_alibi_slopes: Optional[paddle.Tensor],
+        maybe_prefix_len_ptr: Optional[paddle.Tensor],
+        maybe_token_pos_in_items_ptr: Optional[paddle.Tensor],
+        maybe_max_item_len_ptr: Optional[paddle.Tensor],
         logits_soft_cap: float,
         sm_scale: float,
-        scale_q: Optional[torch.Tensor],
-        scale_k: Optional[torch.Tensor],
-        scale_v: Optional[torch.Tensor],
+        scale_q: Optional[paddle.Tensor],
+        scale_k: Optional[paddle.Tensor],
+        scale_v: Optional[paddle.Tensor],
         rope_scale: float,
         rope_theta: float,
         token_pos_in_items_len: int,
         num_qo_heads: Optional[int] = None,
         num_kv_heads: Optional[int] = None,
-        block_tables: Optional[torch.Tensor] = None,
-        kv_lens_buffer: Optional[torch.Tensor] = None,
+        block_tables: Optional[paddle.Tensor] = None,
+        kv_lens_buffer: Optional[paddle.Tensor] = None,
         page_size: Optional[int] = None,
         max_q_len: Optional[int] = None,
         max_kv_len: Optional[int] = None,
         batch_size: Optional[int] = None,
-        cum_seq_lens_q: Optional[torch.Tensor] = None,
-        cum_seq_lens_kv: Optional[torch.Tensor] = None,
-        sinks: Optional[torch.Tensor] = None,
+        cum_seq_lens_q: Optional[paddle.Tensor] = None,
+        cum_seq_lens_kv: Optional[paddle.Tensor] = None,
+        sinks: Optional[paddle.Tensor] = None,
     ) -> None:
         if backend == "trtllm-gen":
             assert maybe_lse is None
@@ -550,7 +515,7 @@ def get_batch_prefill_module(backend, *args):
             assert cum_seq_lens_kv is not None
             assert enable_pdl is not None
             o = paged_run_func(
-                q.contiguous(),  # NOTE(Siyuan): without contiguous, the result is incorrect
+                q.contiguous(),
                 paged_k_cache,
                 paged_v_cache,
                 int_workspace_buffer,
@@ -559,7 +524,7 @@ def get_batch_prefill_module(backend, *args):
                 max_q_len,
                 max_kv_len,
                 sm_scale,
-                1.0,  # NOTE(Siyuan): update this to expose bmm2 scale
+                1.0,
                 batch_size,
                 cum_seq_lens_q,
                 cum_seq_lens_kv,
@@ -595,85 +560,84 @@ def get_batch_prefill_module(backend, *args):
                 maybe_max_item_len_ptr,
                 logits_soft_cap,
                 sm_scale,
-                1.0 / rope_scale,  # rope_rcp_scale
-                1.0 / rope_theta,  # rope_rcp_theta
+                1.0 / rope_scale,
+                1.0 / rope_theta,
+                token_pos_in_items_len,
+            )
+        elif not is_float8(q):
+            paged_run_func(
+                float_workspace_buffer,
+                int_workspace_buffer,
+                plan_info_vec,
+                q,
+                paged_k_cache,
+                paged_v_cache,
+                qo_indptr,
+                paged_kv_indptr,
+                paged_kv_indices,
+                paged_kv_last_page_len,
+                o,
+                maybe_lse,
+                mask_mode,
+                layout,
+                window_left,
+                enable_pdl,
+                maybe_prefix_len_ptr,
+                maybe_token_pos_in_items_ptr,
+                maybe_max_item_len_ptr,
+                logits_soft_cap,
+                sm_scale,
                 token_pos_in_items_len,
             )
         else:
-            if not is_float8(q):
-                paged_run_func(
-                    float_workspace_buffer,
-                    int_workspace_buffer,
-                    plan_info_vec,
-                    q,
-                    paged_k_cache,
-                    paged_v_cache,
-                    qo_indptr,
-                    paged_kv_indptr,
-                    paged_kv_indices,
-                    paged_kv_last_page_len,
-                    o,
-                    maybe_lse,
-                    mask_mode,
-                    layout,
-                    window_left,
-                    enable_pdl,
-                    maybe_prefix_len_ptr,
-                    maybe_token_pos_in_items_ptr,
-                    maybe_max_item_len_ptr,
-                    logits_soft_cap,
-                    sm_scale,
-                    token_pos_in_items_len,
-                )
-            else:
-                paged_run_func(
-                    float_workspace_buffer,
-                    int_workspace_buffer,
-                    plan_info_vec,
-                    q,
-                    paged_k_cache,
-                    paged_v_cache,
-                    qo_indptr,
-                    paged_kv_indptr,
-                    paged_kv_indices,
-                    paged_kv_last_page_len,
-                    o,
-                    maybe_lse,
-                    mask_mode,
-                    layout,
-                    window_left,
-                    enable_pdl,
-                    scale_q,
-                    scale_k,
-                    scale_v,
-                    sm_scale,
-                )
+            paged_run_func(
+                float_workspace_buffer,
+                int_workspace_buffer,
+                plan_info_vec,
+                q,
+                paged_k_cache,
+                paged_v_cache,
+                qo_indptr,
+                paged_kv_indptr,
+                paged_kv_indices,
+                paged_kv_last_page_len,
+                o,
+                maybe_lse,
+                mask_mode,
+                layout,
+                window_left,
+                enable_pdl,
+                scale_q,
+                scale_k,
+                scale_v,
+                sm_scale,
+            )
         return o
 
     @register_fake_op(f"flashinfer::{uri}_paged_run")
     def _fake_paged_run(
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
         plan_info_vec: List[int],
-        q: torch.Tensor,
-        paged_k_cache: torch.Tensor,
-        paged_v_cache: torch.Tensor,
-        qo_indptr: torch.Tensor,
-        paged_kv_indptr: torch.Tensor,
-        paged_kv_indices: torch.Tensor,
-        paged_kv_last_page_len: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        paged_k_cache: paddle.Tensor,
+        paged_v_cache: paddle.Tensor,
+        qo_indptr: paddle.Tensor,
+        paged_kv_indptr: paddle.Tensor,
+        paged_kv_indices: paddle.Tensor,
+        paged_kv_last_page_len: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
         enable_pdl: bool,
-        maybe_custom_mask: Optional[torch.Tensor],
-        maybe_mask_indptr: Optional[torch.Tensor],
-        maybe_alibi_slopes: Optional[torch.Tensor],
-        maybe_prefix_len_ptr: Optional[torch.Tensor],
-        maybe_token_pos_in_items_ptr: Optional[torch.Tensor],
-        maybe_max_item_len_ptr: Optional[torch.Tensor],
+        maybe_custom_mask: Optional[paddle.Tensor],
+        maybe_mask_indptr: Optional[paddle.Tensor],
+        maybe_alibi_slopes: Optional[paddle.Tensor],
+        maybe_prefix_len_ptr: Optional[paddle.Tensor],
+        maybe_token_pos_in_items_ptr: Optional[paddle.Tensor],
+        maybe_max_item_len_ptr: Optional[paddle.Tensor],
         logits_soft_cap: float,
         sm_scale: float,
         rope_scale: float,
@@ -681,26 +645,18 @@ def get_batch_prefill_module(backend, *args):
         token_pos_in_items_len: int,
         num_qo_heads: Optional[int] = None,
         num_kv_heads: Optional[int] = None,
-        block_tables: Optional[torch.Tensor] = None,
-        kv_lens_buffer: Optional[torch.Tensor] = None,
+        block_tables: Optional[paddle.Tensor] = None,
+        kv_lens_buffer: Optional[paddle.Tensor] = None,
         page_size: Optional[int] = None,
         max_q_len: Optional[int] = None,
         max_kv_len: Optional[int] = None,
         batch_size: Optional[int] = None,
-        cum_seq_lens_q: Optional[torch.Tensor] = None,
-        cum_seq_lens_kv: Optional[torch.Tensor] = None,
+        cum_seq_lens_q: Optional[paddle.Tensor] = None,
+        cum_seq_lens_kv: Optional[paddle.Tensor] = None,
     ) -> None:
         pass
 
-    # Register the module.
-    #
-    # Note that plan is not part of model logic. It should not be included in
-    # Cuda Graph or torch.compile. So, we don't provide a torch library for plan.
-    return SimpleNamespace(
-        plan=plan_func,
-        ragged_run=ragged_run,
-        paged_run=paged_run,
-    )
+    return SimpleNamespace(plan=plan_func, ragged_run=ragged_run, paged_run=paged_run)
 
 
 @functools.cache
@@ -709,7 +665,6 @@ def get_batch_prefill_jit_module(module_name: str, jit_module: Any):
     ragged_run_func = jit_module.ragged_run.default
     paged_run_func = jit_module.paged_run.default
 
-    # torch library for ragged_run
     @register_custom_op(
         f"flashinfer::{module_name}_ragged_run",
         mutates_args=(
@@ -720,16 +675,16 @@ def get_batch_prefill_jit_module(module_name: str, jit_module: Any):
         ),
     )
     def ragged_run(
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
         plan_info_vec: List[int],
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        qo_indptr: torch.Tensor,
-        kv_indptr: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        qo_indptr: paddle.Tensor,
+        kv_indptr: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
@@ -754,16 +709,16 @@ def get_batch_prefill_jit_module(module_name: str, jit_module: Any):
 
     @register_fake_op(f"flashinfer::{module_name}_ragged_run")
     def _fake_ragged_run(
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
         plan_info_vec: List[int],
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        qo_indptr: torch.Tensor,
-        kv_indptr: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        qo_indptr: paddle.Tensor,
+        kv_indptr: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
@@ -771,7 +726,6 @@ def get_batch_prefill_jit_module(module_name: str, jit_module: Any):
     ) -> None:
         pass
 
-    # torch library for paged_run
     @register_custom_op(
         f"flashinfer::{module_name}_paged_run",
         mutates_args=(
@@ -784,18 +738,18 @@ def get_batch_prefill_jit_module(module_name: str, jit_module: Any):
         ),
     )
     def paged_run(
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
         plan_info_vec: List[int],
-        q: torch.Tensor,
-        paged_k_cache: torch.Tensor,
-        paged_v_cache: torch.Tensor,
-        qo_indptr: torch.Tensor,
-        paged_kv_indptr: torch.Tensor,
-        paged_kv_indices: torch.Tensor,
-        paged_kv_last_page_len: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        paged_k_cache: paddle.Tensor,
+        paged_v_cache: paddle.Tensor,
+        qo_indptr: paddle.Tensor,
+        paged_kv_indptr: paddle.Tensor,
+        paged_kv_indices: paddle.Tensor,
+        paged_kv_last_page_len: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
@@ -822,18 +776,18 @@ def get_batch_prefill_jit_module(module_name: str, jit_module: Any):
 
     @register_fake_op(f"flashinfer::{module_name}_paged_run")
     def _fake_paged_run(
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
         plan_info_vec: List[int],
-        q: torch.Tensor,
-        paged_k_cache: torch.Tensor,
-        paged_v_cache: torch.Tensor,
-        qo_indptr: torch.Tensor,
-        paged_kv_indptr: torch.Tensor,
-        paged_kv_indices: torch.Tensor,
-        paged_kv_last_page_len: torch.Tensor,
-        o: torch.Tensor,
-        maybe_lse: Optional[torch.Tensor],
+        q: paddle.Tensor,
+        paged_k_cache: paddle.Tensor,
+        paged_v_cache: paddle.Tensor,
+        qo_indptr: paddle.Tensor,
+        paged_kv_indptr: paddle.Tensor,
+        paged_kv_indices: paddle.Tensor,
+        paged_kv_last_page_len: paddle.Tensor,
+        o: paddle.Tensor,
+        maybe_lse: Optional[paddle.Tensor],
         mask_mode: int,
         layout: int,
         window_left: int,
@@ -841,36 +795,28 @@ def get_batch_prefill_jit_module(module_name: str, jit_module: Any):
     ) -> None:
         pass
 
-    # Register the module.
-    #
-    # Note that plan is not part of model logic. It should not be included in
-    # Cuda Graph or torch.compile. So, we don't provide a torch library for plan.
-    return SimpleNamespace(
-        plan=plan_func,
-        ragged_run=ragged_run,
-        paged_run=paged_run,
-    )
+    return SimpleNamespace(plan=plan_func, ragged_run=ragged_run, paged_run=paged_run)
 
 
 def single_prefill_with_kv_cache_with_jit_module(
     jit_module: Any,
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
     *args,
     kv_layout: str = "NHD",
     mask_mode: int = MaskMode.NON_CAUSAL.value,
     window_left: int = -1,
     return_lse: bool = False,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-    device = q.device
+) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
+    device = q.place
     tmp = _get_cache_buf(
         "single_prefill_with_kv_cache_tmp", 32 * 1024 * 1024, device=device
     )
-    o = torch.empty(q.shape[:-1] + v.shape[-1:], dtype=q.dtype, device=device)
+    o = paddle.empty(shape=tuple(q.shape)[:-1] + tuple(v.shape)[-1:], dtype=q.dtype)
     lse = None
     if return_lse:
-        lse = torch.empty((q.size(0), q.size(1)), dtype=torch.float32, device=device)
+        lse = paddle.empty(shape=(q.shape[0], q.shape[1]), dtype="float32")
     jit_module.run.default(
         q,
         k,
@@ -888,15 +834,15 @@ def single_prefill_with_kv_cache_with_jit_module(
 
 @overload
 def single_prefill_with_kv_cache(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    scale_q: Optional[torch.Tensor] = None,
-    scale_k: Optional[torch.Tensor] = None,
-    scale_v: Optional[torch.Tensor] = None,
-    o_dtype: Optional[torch.dtype] = None,
-    custom_mask: Optional[torch.Tensor] = None,
-    packed_custom_mask: Optional[torch.Tensor] = None,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
+    scale_q: Optional[paddle.Tensor] = None,
+    scale_k: Optional[paddle.Tensor] = None,
+    scale_v: Optional[paddle.Tensor] = None,
+    o_dtype: Optional[paddle.dtype] = None,
+    custom_mask: Optional[paddle.Tensor] = None,
+    packed_custom_mask: Optional[paddle.Tensor] = None,
     causal: bool = False,
     kv_layout: str = "NHD",
     pos_encoding_mode: str = "NONE",
@@ -908,20 +854,21 @@ def single_prefill_with_kv_cache(
     rope_theta: Optional[float] = None,
     backend: str = "auto",
     return_lse: Literal[False] = False,
-) -> torch.Tensor: ...
+) -> paddle.Tensor:
+    ...
 
 
 @overload
 def single_prefill_with_kv_cache(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    scale_q: Optional[torch.Tensor] = None,
-    scale_k: Optional[torch.Tensor] = None,
-    scale_v: Optional[torch.Tensor] = None,
-    o_dtype: Optional[torch.dtype] = None,
-    custom_mask: Optional[torch.Tensor] = None,
-    packed_custom_mask: Optional[torch.Tensor] = None,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
+    scale_q: Optional[paddle.Tensor] = None,
+    scale_k: Optional[paddle.Tensor] = None,
+    scale_v: Optional[paddle.Tensor] = None,
+    o_dtype: Optional[paddle.dtype] = None,
+    custom_mask: Optional[paddle.Tensor] = None,
+    packed_custom_mask: Optional[paddle.Tensor] = None,
     causal: bool = False,
     kv_layout: str = "NHD",
     pos_encoding_mode: str = "NONE",
@@ -933,19 +880,20 @@ def single_prefill_with_kv_cache(
     rope_theta: Optional[float] = None,
     backend: str = "auto",
     return_lse: Literal[True] = True,
-) -> Tuple[torch.Tensor, torch.Tensor]: ...
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    ...
 
 
 def single_prefill_with_kv_cache(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    scale_q: Optional[torch.Tensor] = None,
-    scale_k: Optional[torch.Tensor] = None,
-    scale_v: Optional[torch.Tensor] = None,
-    o_dtype: Optional[torch.dtype] = None,
-    custom_mask: Optional[torch.Tensor] = None,
-    packed_custom_mask: Optional[torch.Tensor] = None,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
+    scale_q: Optional[paddle.Tensor] = None,
+    scale_k: Optional[paddle.Tensor] = None,
+    scale_v: Optional[paddle.Tensor] = None,
+    o_dtype: Optional[paddle.dtype] = None,
+    custom_mask: Optional[paddle.Tensor] = None,
+    packed_custom_mask: Optional[paddle.Tensor] = None,
     causal: bool = False,
     kv_layout: str = "NHD",
     pos_encoding_mode: str = "NONE",
@@ -957,8 +905,8 @@ def single_prefill_with_kv_cache(
     rope_theta: Optional[float] = None,
     backend: str = "auto",
     return_lse: bool = False,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-    r"""Prefill/Append attention with KV cache for single request, return the attention
+) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
+    """Prefill/Append attention with KV cache for single request, return the attention
     output.
 
     Parameters
@@ -1016,7 +964,7 @@ def single_prefill_with_kv_cache(
         The attention logits soft capping value (used in Gemini, Grok and Gemma-2, etc.), if not
         provided, will be set to ``0``. If greater than 0, the logits will be capped according to
         formula:
-        :math:`\texttt{logits_soft_cap} \times \mathrm{tanh}(x / \texttt{logits_soft_cap})`,
+        :math:`\\texttt{logits_soft_cap} \\times \\mathrm{tanh}(x / \\texttt{logits_soft_cap})`,
         where :math:`x` is the input logits.
     sm_scale : Optional[float]
         The scale used in softmax, if not provided, will be set to ``1.0 / sqrt(head_dim_qk)``.
@@ -1081,75 +1029,62 @@ def single_prefill_with_kv_cache(
     """
     _check_pos_encoding_mode(pos_encoding_mode)
     _check_kv_layout(kv_layout)
-    tmp = _get_cache_buf("single_prefill_with_kv_cache_tmp", 32 * 1024 * 1024, q.device)
+    tmp = _get_cache_buf("single_prefill_with_kv_cache_tmp", 32 * 1024 * 1024, q.place)
     if logits_soft_cap is None:
         logits_soft_cap = 0.0
     if sm_scale is None:
-        sm_scale = 1.0 / math.sqrt(q.size(-1))
+        sm_scale = 1.0 / math.sqrt(q.shape[-1])
     if rope_scale is None:
         rope_scale = 1.0
     if rope_theta is None:
-        rope_theta = 1e4
+        rope_theta = 10000.0
     if custom_mask is not None and packed_custom_mask is None:
-        # create packed custom mask from custom mask
         packed_custom_mask = packbits(
             custom_mask.contiguous().view(-1), bitorder="little"
         )
-
     if packed_custom_mask is not None:
         mask_mode = MaskMode.CUSTOM.value
+    elif causal:
+        mask_mode = MaskMode.CAUSAL.value
     else:
-        if causal:
-            mask_mode = MaskMode.CAUSAL.value
-        else:
-            mask_mode = MaskMode.NON_CAUSAL.value
-
+        mask_mode = MaskMode.NON_CAUSAL.value
     lse = None
     if return_lse:
-        lse = torch.empty((q.size(0), q.size(1)), dtype=torch.float32, device=q.device)
-
+        lse = paddle.empty(shape=(q.shape[0], q.shape[1]), dtype="float32")
     if is_float8(q):
-        # FP8 quant enabled, do sanity check:
-        #   1. unsupported feature
-        #   2. dtype check
         assert window_left == -1
         assert q.dtype == k.dtype == v.dtype
-        assert q.shape[-1] == k.shape[-1] == v.shape[-1]
+        assert tuple(q.shape)[-1] == tuple(k.shape)[-1] == tuple(v.shape)[-1]
         if scale_q is None:
-            scale_q = torch.ones(q.shape[1], dtype=torch.float32, device=q.device)
+            scale_q = paddle.ones(shape=tuple(q.shape)[1], dtype="float32")
         if scale_k is None:
-            scale_k = torch.ones(k.shape[1], dtype=torch.float32, device=q.device)
+            scale_k = paddle.ones(shape=tuple(k.shape)[1], dtype="float32")
         if scale_v is None:
-            scale_v = torch.ones(v.shape[1], dtype=torch.float32, device=q.device)
-
+            scale_v = paddle.ones(shape=tuple(v.shape)[1], dtype="float32")
     if backend == "auto":
         backend = determine_attention_backend(
-            q.device,
+            q.place,
             PosEncodingMode[pos_encoding_mode].value,
             use_fp16_qk_reduction,
-            packed_custom_mask is not None,  # use_custom_mask
+            packed_custom_mask is not None,
             q.dtype,
             k.dtype,
         )
-
-    # o_dtype should be provided for FP8 attention
     if o_dtype is None:
         o_dtype = q.dtype
-    out = torch.empty(q.shape[:-1] + v.shape[-1:], dtype=o_dtype, device=q.device)
-
+    out = paddle.empty(shape=tuple(q.shape)[:-1] + tuple(v.shape)[-1:], dtype=o_dtype)
     module = get_single_prefill_module(
         backend,
         q.dtype,
         k.dtype,
         out.dtype,
-        q.shape[-1],  # head_dim_qk
-        v.shape[-1],  # head_dim_vo
+        tuple(q.shape)[-1],
+        tuple(v.shape)[-1],
         PosEncodingMode[pos_encoding_mode].value,
-        window_left >= 0,  # use_sliding_window
-        logits_soft_cap > 0,  # use_logits_soft_cap
+        window_left >= 0,
+        logits_soft_cap > 0,
         use_fp16_qk_reduction,
     )
-
     module.run(
         q,
         k,
@@ -1161,7 +1096,7 @@ def single_prefill_with_kv_cache(
         TensorLayout[kv_layout].value,
         window_left,
         packed_custom_mask,
-        _get_cache_alibi_slopes_buf(q.shape[1], q.device),
+        _get_cache_alibi_slopes_buf(tuple(q.shape)[1], q.place),
         logits_soft_cap,
         sm_scale,
         scale_q,
@@ -1170,7 +1105,6 @@ def single_prefill_with_kv_cache(
         rope_scale,
         rope_theta,
     )
-
     return (out, lse) if return_lse else out
 
 
@@ -1180,30 +1114,30 @@ single_prefill_with_kv_cache_return_lse = functools.partial(
 
 
 def _compute_page_mask_indptr(
-    qo_indptr: torch.Tensor,
-    paged_kv_indptr: torch.Tensor,
-    paged_kv_last_page_len: torch.Tensor,
+    qo_indptr: paddle.Tensor,
+    paged_kv_indptr: paddle.Tensor,
+    paged_kv_last_page_len: paddle.Tensor,
     page_size: int,
-) -> torch.Tensor:
+) -> paddle.Tensor:
     if len(qo_indptr) != len(paged_kv_indptr):
         raise ValueError(
             "The length of qo_indptr and paged_kv_indptr should be the same."
         )
-    mask_indptr = torch.empty_like(qo_indptr)
+    mask_indptr = paddle.empty_like(x=qo_indptr)
     mask_indptr[0] = 0
-    mask_indptr[1:] = torch.cumsum(
-        (qo_indptr[1:] - qo_indptr[:-1])
+    mask_indptr[1:] = paddle.cumsum(
+        x=(qo_indptr[1:] - qo_indptr[:-1])
         * (
             (paged_kv_indptr[1:] - paged_kv_indptr[:-1] - 1) * page_size
             + paged_kv_last_page_len
         ),
-        0,
+        axis=0,
     )
     return mask_indptr
 
 
 class BatchPrefillWithPagedKVCacheWrapper:
-    r"""Wrapper class for prefill/append attention with paged kv-cache for batch of
+    """Wrapper class for prefill/append attention with paged kv-cache for batch of
     requests.
 
     Check :ref:`our tutorial <kv-layout>` for page table layout.
@@ -1306,20 +1240,20 @@ class BatchPrefillWithPagedKVCacheWrapper:
 
     def __init__(
         self,
-        float_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
         kv_layout: str = "NHD",
         use_cuda_graph: bool = False,
-        qo_indptr_buf: Optional[torch.Tensor] = None,
-        paged_kv_indptr_buf: Optional[torch.Tensor] = None,
-        paged_kv_indices_buf: Optional[torch.Tensor] = None,
-        paged_kv_last_page_len_buf: Optional[torch.Tensor] = None,
-        custom_mask_buf: Optional[torch.Tensor] = None,
-        mask_indptr_buf: Optional[torch.Tensor] = None,
+        qo_indptr_buf: Optional[paddle.Tensor] = None,
+        paged_kv_indptr_buf: Optional[paddle.Tensor] = None,
+        paged_kv_indices_buf: Optional[paddle.Tensor] = None,
+        paged_kv_last_page_len_buf: Optional[paddle.Tensor] = None,
+        custom_mask_buf: Optional[paddle.Tensor] = None,
+        mask_indptr_buf: Optional[paddle.Tensor] = None,
         backend: str = "auto",
         jit_args: Optional[List[Any]] = None,
         jit_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        r"""Constructor of :class:`BatchPrefillWithPagedKVCacheWrapper`.
+        """Constructor of :class:`BatchPrefillWithPagedKVCacheWrapper`.
 
         Parameters
         ----------
@@ -1382,7 +1316,6 @@ class BatchPrefillWithPagedKVCacheWrapper:
             The keyword arguments to create the JIT module, defaults to None.
         """
         _check_kv_layout(kv_layout)
-
         if jit_args is not None:
             if jit_kwargs is None:
                 jit_kwargs = {}
@@ -1392,51 +1325,42 @@ class BatchPrefillWithPagedKVCacheWrapper:
             )
         else:
             self._jit_module = None
-
         self._kv_layout = kv_layout
         if backend == "cudnn":
             assert kv_layout == "NHD", "CUDNN backend only supports NHD layout"
-
         self._float_workspace_buffer = float_workspace_buffer
-        self.device = float_workspace_buffer.device
-        self._vector_sparse_indptr_buffer: Optional[torch.Tensor] = None
+        self.device = float_workspace_buffer.place
+        self._vector_sparse_indptr_buffer: Optional[paddle.Tensor] = None
         if backend in ["fa3", "auto", "trtllm-gen"]:
-            # NOTE(Zihao): assume maximum accumulate kv length is 16M
-            self._vector_sparse_indices_buffer = torch.empty(
-                (16 * 1024 * 1024,), dtype=torch.int32, device=self.device
+            self._vector_sparse_indices_buffer = paddle.empty(
+                shape=(16 * 1024 * 1024,), dtype="int32"
             )
-            # NOTE(Zihao): assume maximum batch size is 32768
-            self._vector_sparse_indptr_buffer = torch.empty(
-                (32768,), dtype=torch.int32, device=self.device
+            self._vector_sparse_indptr_buffer = paddle.empty(
+                shape=(32768,), dtype="int32"
             )
-
-        self._kv_lens_buffer = torch.empty(
-            (32768,), dtype=torch.int32, device=self.device
+        self._kv_lens_buffer = paddle.empty(shape=(32768,), dtype="int32")
+        self._int_workspace_buffer = paddle.empty(
+            shape=(8 * 1024 * 1024,), dtype="uint8"
         )
-        self._int_workspace_buffer = torch.empty(
-            (8 * 1024 * 1024,), dtype=torch.uint8, device=self.device
-        )
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape),
             dtype=self._int_workspace_buffer.dtype,
-            device="cpu",
-            pin_memory=True,
-        )
+        ).pin_memory()
         self._use_cuda_graph = use_cuda_graph
         if use_cuda_graph:
-            if not torch.is_tensor(qo_indptr_buf):
+            if not paddle.is_tensor(x=qo_indptr_buf):
                 raise ValueError(
                     "qo_indptr_buf should be a torch.Tensor in CUDA graph mode"
                 )
-            if not torch.is_tensor(paged_kv_indptr_buf):
+            if not paddle.is_tensor(x=paged_kv_indptr_buf):
                 raise ValueError(
                     "paged_kv_indptr_buf should be a torch.Tensor in CUDA graph mode"
                 )
-            if not torch.is_tensor(paged_kv_indices_buf):
+            if not paddle.is_tensor(x=paged_kv_indices_buf):
                 raise ValueError(
                     "paged_kv_indices_buf should be a torch.Tensor in CUDA graph mode"
                 )
-            if not torch.is_tensor(paged_kv_last_page_len_buf):
+            if not paddle.is_tensor(x=paged_kv_last_page_len_buf):
                 raise ValueError(
                     "paged_kv_last_page_len_buf should be a torch.Tensor in CUDA graph mode"
                 )
@@ -1449,10 +1373,8 @@ class BatchPrefillWithPagedKVCacheWrapper:
                 raise ValueError(
                     "The length of paged_kv_last_page_len_buf should be batch_size."
                 )
-            # NOTE(Zihao): do not check custom_mask_buf and mask_indptr_buf here, as they are optional
         else:
             self._fixed_batch_size = 0
-
         self._qo_indptr_buf = qo_indptr_buf
         self._paged_kv_indptr_buf = paged_kv_indptr_buf
         self._paged_kv_indices_buf = paged_kv_indices_buf
@@ -1472,9 +1394,9 @@ class BatchPrefillWithPagedKVCacheWrapper:
         return self._use_cuda_graph
 
     def reset_workspace_buffer(
-        self, float_workspace_buffer: torch.Tensor, int_workspace_buffer: torch.Tensor
+        self, float_workspace_buffer: paddle.Tensor, int_workspace_buffer: paddle.Tensor
     ) -> None:
-        r"""Reset the workspace buffer.
+        """Reset the workspace buffer.
 
         Parameters
         ----------
@@ -1488,26 +1410,24 @@ class BatchPrefillWithPagedKVCacheWrapper:
         """
         self._float_workspace_buffer = float_workspace_buffer
         self._int_workspace_buffer = int_workspace_buffer
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape),
             dtype=self._int_workspace_buffer.dtype,
-            device="cpu",
-            pin_memory=True,
-        )
+        ).pin_memory()
 
     def plan(
         self,
-        qo_indptr: torch.Tensor,
-        paged_kv_indptr: torch.Tensor,
-        paged_kv_indices: torch.Tensor,
-        paged_kv_last_page_len: torch.Tensor,
+        qo_indptr: paddle.Tensor,
+        paged_kv_indptr: paddle.Tensor,
+        paged_kv_indices: paddle.Tensor,
+        paged_kv_last_page_len: paddle.Tensor,
         num_qo_heads: int,
         num_kv_heads: int,
         head_dim_qk: int,
         page_size: int,
         head_dim_vo: Optional[int] = None,
-        custom_mask: Optional[torch.Tensor] = None,
-        packed_custom_mask: Optional[torch.Tensor] = None,
+        custom_mask: Optional[paddle.Tensor] = None,
+        packed_custom_mask: Optional[paddle.Tensor] = None,
         causal: bool = False,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
@@ -1516,20 +1436,20 @@ class BatchPrefillWithPagedKVCacheWrapper:
         logits_soft_cap: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-        q_data_type: Union[str, torch.dtype] = "float16",
-        kv_data_type: Optional[Union[str, torch.dtype]] = None,
+        q_data_type: Union[str, paddle.dtype] = "float16",
+        kv_data_type: Optional[Union[str, paddle.dtype]] = None,
         non_blocking: bool = True,
-        prefix_len_ptr: Optional[torch.Tensor] = None,
-        token_pos_in_items_ptr: Optional[torch.Tensor] = None,
+        prefix_len_ptr: Optional[paddle.Tensor] = None,
+        token_pos_in_items_ptr: Optional[paddle.Tensor] = None,
         token_pos_in_items_len: int = 0,
-        max_item_len_ptr: Optional[torch.Tensor] = None,
-        seq_lens: Optional[torch.Tensor] = None,
-        seq_lens_q: Optional[torch.Tensor] = None,
-        block_tables: Optional[torch.Tensor] = None,
+        max_item_len_ptr: Optional[paddle.Tensor] = None,
+        seq_lens: Optional[paddle.Tensor] = None,
+        seq_lens_q: Optional[paddle.Tensor] = None,
+        block_tables: Optional[paddle.Tensor] = None,
         max_token_per_sequence: Optional[int] = None,
         max_sequence_kv: Optional[int] = None,
     ) -> None:
-        r"""Plan batch prefill/append attention on Paged KV-Cache for given problem specification.
+        """Plan batch prefill/append attention on Paged KV-Cache for given problem specification.
 
         Parameters
         ----------
@@ -1586,7 +1506,7 @@ class BatchPrefillWithPagedKVCacheWrapper:
             The attention logits soft capping value (used in Gemini, Grok and Gemma-2, etc.), if not
             provided, will be set to ``0``. If greater than 0, the logits will be capped according to
             formula:
-            :math:`\texttt{logits_soft_cap} \times \mathrm{tanh}(x / \texttt{logits_soft_cap})`,
+            :math:`\\texttt{logits_soft_cap} \\times \\mathrm{tanh}(x / \\texttt{logits_soft_cap})`,
             where :math:`x` is the input logits.
         sm_scale : Optional[float]
             The scale used in softmax, if not provided, will be set to
@@ -1644,44 +1564,32 @@ class BatchPrefillWithPagedKVCacheWrapper:
         if kv_data_type is None:
             kv_data_type = q_data_type
         kv_data_type = canonicalize_torch_dtype(kv_data_type)
-
         if logits_soft_cap is None:
             logits_soft_cap = 0.0
         if head_dim_vo is None:
             head_dim_vo = head_dim_qk
-
         batch_size = len(qo_indptr) - 1
         self._batch_size = batch_size
         self._num_qo_heads = num_qo_heads
         self._num_kv_heads = num_kv_heads
         if custom_mask is not None or packed_custom_mask is not None:
             mask_indptr = _compute_page_mask_indptr(
-                qo_indptr,
-                paged_kv_indptr,
-                paged_kv_last_page_len,
-                page_size,
+                qo_indptr, paged_kv_indptr, paged_kv_last_page_len, page_size
             )
         if packed_custom_mask is None and custom_mask is not None:
-            # create packed custom mask from custom mask
             packed_custom_mask, mask_indptr = segment_packbits(
-                custom_mask.contiguous().view(-1),
-                mask_indptr,
-                bitorder="little",
+                custom_mask.contiguous().view(-1), mask_indptr, bitorder="little"
             )
-
         self._prefix_len_ptr = prefix_len_ptr
         self._token_pos_in_items_ptr = token_pos_in_items_ptr
         self._token_pos_in_items_len = token_pos_in_items_len
         self._max_item_len_ptr = max_item_len_ptr
-
-        # NOTE(Zihao): only required if qo_indptr/paged_kv_indptr are device tensors
         if max_token_per_sequence is not None:
             self._max_q_len = max_token_per_sequence
         else:
             qo_indptr_host = qo_indptr.to("cpu")
             self._max_q_len = max(qo_indptr_host).item()
             total_num_rows = qo_indptr_host[-1]
-
         if max_sequence_kv is not None:
             self._max_kv_len = max_sequence_kv
         else:
@@ -1693,27 +1601,22 @@ class BatchPrefillWithPagedKVCacheWrapper:
                 )
             else:
                 kv_lens_arr_host = seq_lens.cpu().flatten()
-            self._kv_lens_buffer[: len(kv_lens_arr_host)].copy_(
-                kv_lens_arr_host, non_blocking=non_blocking
+            paddle.assign(
+                kv_lens_arr_host, output=self._kv_lens_buffer[: len(kv_lens_arr_host)]
             )
             self._max_kv_len = max(kv_lens_arr_host).item()
-
         if self.is_cuda_graph_enabled:
             if self._max_total_num_rows is None:
                 self._max_total_num_rows = total_num_rows
             elif total_num_rows > self._max_total_num_rows:
                 raise ValueError(
-                    "The total number of rows in qo_indptr {} in cuda graph mode cannot "
-                    "exceed the number of rows set during initialization {}.".format(
+                    "The total number of rows in qo_indptr {} in cuda graph mode cannot exceed the number of rows set during initialization {}.".format(
                         total_num_rows, self._max_total_num_rows
                     )
                 )
-
             if batch_size != self._fixed_batch_size:
                 raise ValueError(
-                    "The batch size should be fixed during the lifecycle of the wrapper in "
-                    "cuda graph mode, the runtime batch size {} mismatches the batch size {} "
-                    " set during initialization.".format(
+                    "The batch size should be fixed during the lifecycle of the wrapper in cuda graph mode, the runtime batch size {} mismatches the batch size {}  set during initialization.".format(
                         batch_size, self._fixed_batch_size
                     )
                 )
@@ -1721,58 +1624,52 @@ class BatchPrefillWithPagedKVCacheWrapper:
                 raise ValueError(
                     "The length of paged_kv_indices exceeds the allocated buffer size."
                 )
-
-            self._qo_indptr_buf.copy_(qo_indptr, non_blocking=non_blocking)
-            self._paged_kv_indptr_buf.copy_(paged_kv_indptr, non_blocking=non_blocking)
-            self._paged_kv_last_page_len_buf.copy_(
-                paged_kv_last_page_len, non_blocking=non_blocking
+            paddle.assign(qo_indptr, output=self._qo_indptr_buf)
+            paddle.assign(paged_kv_indptr, output=self._paged_kv_indptr_buf)
+            paddle.assign(
+                paged_kv_last_page_len, output=self._paged_kv_last_page_len_buf
             )
-            self._paged_kv_indices_buf[: len(paged_kv_indices)].copy_(
+            paddle.assign(
                 paged_kv_indices,
-                non_blocking=(paged_kv_indices.device == self.device) and non_blocking,
+                output=self._paged_kv_indices_buf[: len(paged_kv_indices)],
             )
-
             if packed_custom_mask is not None:
-                if not torch.is_tensor(self._custom_mask_buf):
+                if not paddle.is_tensor(x=self._custom_mask_buf):
                     raise ValueError(
                         "custom_mask_buf must be initialized with a torch.Tensor in cuda graph mode if we use custom mask in attention computation."
                     )
-                if not torch.is_tensor(self._mask_indptr_buf):
+                if not paddle.is_tensor(x=self._mask_indptr_buf):
                     raise ValueError(
                         "mask_indptr_buf must be initialized with a torch.Tensor in cuda graph mode if we use custom mask in attention computation."
                     )
-                self._custom_mask_buf[: len(packed_custom_mask)].copy_(
+                paddle.assign(
                     packed_custom_mask,
-                    non_blocking=(packed_custom_mask.device == self.device)
-                    and non_blocking,
+                    output=self._custom_mask_buf[: len(packed_custom_mask)],
                 )
-                # NOTE(Zihao): mask_indptr has the same length as qo_indptr
-                self._mask_indptr_buf.copy_(mask_indptr, non_blocking=non_blocking)
+                paddle.assign(mask_indptr, output=self._mask_indptr_buf)
         else:
-            self._qo_indptr_buf = qo_indptr.to(self.device, non_blocking=non_blocking)
+            self._qo_indptr_buf = qo_indptr.to(self.device, blocking=not non_blocking)
             self._paged_kv_indptr_buf = paged_kv_indptr.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
             self._paged_kv_indices_buf = paged_kv_indices.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
             self._paged_kv_last_page_len_buf = paged_kv_last_page_len.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
             if packed_custom_mask is not None:
                 self._custom_mask_buf = packed_custom_mask.to(
-                    self.device, non_blocking=non_blocking
+                    self.device, blocking=not non_blocking
                 )
                 self._mask_indptr_buf = mask_indptr.to(
-                    self.device, non_blocking=non_blocking
+                    self.device, blocking=not non_blocking
                 )
             else:
                 self._custom_mask_buf = None
                 self._mask_indptr_buf = None
-
         self._cached_q_data_type = q_data_type
         self._cached_kv_data_type = kv_data_type
-
         if self._jit_module is not None:
             self._cached_module = self._jit_module
         else:
@@ -1781,7 +1678,7 @@ class BatchPrefillWithPagedKVCacheWrapper:
                     self.device,
                     PosEncodingMode[pos_encoding_mode].value,
                     use_fp16_qk_reduction,
-                    self._custom_mask_buf is not None,  # use_custom_mask
+                    self._custom_mask_buf is not None,
                     q_data_type,
                     kv_data_type,
                 )
@@ -1794,57 +1691,54 @@ class BatchPrefillWithPagedKVCacheWrapper:
                     head_dim_qk,
                     head_dim_vo,
                     PosEncodingMode[pos_encoding_mode].value,
-                    window_left >= 0,  # use_sliding_window
-                    logits_soft_cap > 0,  # use_logits_soft_cap
+                    window_left >= 0,
+                    logits_soft_cap > 0,
                     use_fp16_qk_reduction,
                 )
-
                 self._cached_module = get_batch_prefill_module(
                     self._backend, *get_module_args
                 )
-
         if self._backend == "fa3" or self._backend == "trtllm-gen":
             if page_size != 1:
-                vector_sparse_indptr_host = torch.cat(
-                    [
-                        torch.tensor(
-                            [0], dtype=torch.int32, device=kv_lens_arr_host.device
+                vector_sparse_indptr_host = paddle.concat(
+                    x=[
+                        paddle.to_tensor(
+                            data=[0], dtype="int32", place=kv_lens_arr_host.place
                         ),
-                        torch.cumsum(kv_lens_arr_host, dim=0, dtype=torch.int32),
+                        paddle.cumsum(x=kv_lens_arr_host, axis=0, dtype="int32"),
                     ],
-                    dim=0,
+                    axis=0,
                 )
-                self._vector_sparse_indptr_buffer[
-                    : len(vector_sparse_indptr_host)
-                ].copy_(vector_sparse_indptr_host, non_blocking=non_blocking)
+                paddle.assign(
+                    vector_sparse_indptr_host,
+                    output=self._vector_sparse_indptr_buffer[
+                        : len(vector_sparse_indptr_host)
+                    ],
+                )
                 paged_kv_indptr_host = vector_sparse_indptr_host
-
         self._block_tables = block_tables
         if self._backend == "trtllm-gen":
             assert self._kv_layout == "HND"
             assert logits_soft_cap == 0.0
             if self._block_tables is None:
                 blocks_per_seq = [
-                    (seq_len + page_size - 1) // page_size
+                    ((seq_len + page_size - 1) // page_size)
                     for seq_len in kv_lens_arr_host
                 ]
                 max_num_blocks_per_seq = max(blocks_per_seq)
-                self._block_tables = torch.zeros(
-                    (batch_size, max_num_blocks_per_seq),
-                    dtype=torch.int,
-                    device=self.device,
+                self._block_tables = paddle.zeros(
+                    shape=(batch_size, max_num_blocks_per_seq), dtype="int32"
                 )
                 block_id = paged_kv_indptr_host[0]
                 for i in range(batch_size):
                     num_blocks_needed = blocks_per_seq[i]
-                    assert self._block_tables is not None, (
-                        "block_tables is not initialized"
-                    )
+                    assert (
+                        self._block_tables is not None
+                    ), "block_tables is not initialized"
                     self._block_tables[i, :num_blocks_needed] = paged_kv_indices[
                         block_id : block_id + num_blocks_needed
                     ]
                     block_id += num_blocks_needed
-
         if self._cached_module is not None:
             self._plan_info = self._cached_module.plan(
                 self._float_workspace_buffer,
@@ -1863,7 +1757,6 @@ class BatchPrefillWithPagedKVCacheWrapper:
                 head_dim_vo,
                 causal,
             )
-
         self._causal = causal
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
@@ -1879,8 +1772,8 @@ class BatchPrefillWithPagedKVCacheWrapper:
 
     def forward(
         self,
-        q: torch.Tensor,
-        paged_kv_cache: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        q: paddle.Tensor,
+        paged_kv_cache: Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]],
         causal: bool = False,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
@@ -1891,8 +1784,8 @@ class BatchPrefillWithPagedKVCacheWrapper:
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-    ) -> torch.Tensor:
-        r"""Warning: This function is deprecated, please use :meth:`run` instead."""
+    ) -> paddle.Tensor:
+        """Warning: This function is deprecated, please use :meth:`run` instead."""
         self._causal = causal
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
@@ -1906,49 +1799,51 @@ class BatchPrefillWithPagedKVCacheWrapper:
     @overload
     def run(
         self,
-        q: torch.Tensor,
-        paged_kv_cache: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        q: paddle.Tensor,
+        paged_kv_cache: Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]],
         *args,
         k_scale: Optional[float] = None,
         v_scale: Optional[float] = None,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: Literal[False] = False,
         enable_pdl: Optional[bool] = None,
         window_left: Optional[int] = None,
-    ) -> torch.Tensor: ...
+    ) -> paddle.Tensor:
+        ...
 
     @overload
     def run(
         self,
-        q: torch.Tensor,
-        paged_kv_cache: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        q: paddle.Tensor,
+        paged_kv_cache: Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]],
         *args,
         k_scale: Optional[float] = None,
         v_scale: Optional[float] = None,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: Literal[True] = True,
         enable_pdl: Optional[bool] = None,
         window_left: Optional[int] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]: ...
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        ...
 
     def run(
         self,
-        q: torch.Tensor,
-        paged_kv_cache: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        q: paddle.Tensor,
+        paged_kv_cache: Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]],
         *args,
         q_scale: Optional[float] = None,
         k_scale: Optional[float] = None,
         v_scale: Optional[float] = None,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: bool = False,
         enable_pdl: Optional[bool] = None,
         window_left: Optional[int] = None,
-        sinks: Optional[torch.Tensor] = None,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        r"""Compute batch prefill/append attention between query and paged kv-cache.
+        sinks: Optional[paddle.Tensor] = None,
+    ) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
+        """Compute batch prefill/append attention between query and paged kv-cache.
 
         Parameters
         ----------
@@ -1993,22 +1888,20 @@ class BatchPrefillWithPagedKVCacheWrapper:
             * The logsumexp of attention output, shape: ``[qo_indptr[-1], num_qo_heads]``.
         """
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(q.device)
+            enable_pdl = device_support_pdl(q.place)
         k_cache, v_cache = _unpack_paged_kv_cache(paged_kv_cache, self._kv_layout)
         _check_cached_qkv_data_type(
             q, k_cache, self._cached_q_data_type, self._cached_kv_data_type
         )
-        stride_block = k_cache.stride(0)
+        stride_block = k_cache.get_strides()[0]
         if self._kv_layout == "NHD":
-            page_size = k_cache.shape[1]
-            stride_n = k_cache.stride(1)
+            page_size = tuple(k_cache.shape)[1]
+            stride_n = k_cache.get_strides()[1]
         else:
-            page_size = k_cache.shape[2]
-            stride_n = k_cache.stride(2)
+            page_size = tuple(k_cache.shape)[2]
+            stride_n = k_cache.get_strides()[2]
         window_left = self._window_left if window_left is None else window_left
         if self._backend != "trtllm-gen":
-            # NOTE(Siyuan): since window_left is appeared in the plan function, we need to make sure it is the same as the one in the plan function.
-            # Remove this check if the backend supports dynamic window_left.
             assert window_left == self._window_left
         logits_soft_cap = self._logits_soft_cap
         sm_scale = self._sm_scale
@@ -2017,7 +1910,7 @@ class BatchPrefillWithPagedKVCacheWrapper:
         if logits_soft_cap is None:
             logits_soft_cap = 0.0
         if sm_scale is None:
-            sm_scale = 1.0 / math.sqrt(q.size(-1))
+            sm_scale = 1.0 / math.sqrt(q.shape[-1])
         if q_scale is not None:
             sm_scale *= q_scale
         if k_scale is not None:
@@ -2025,66 +1918,58 @@ class BatchPrefillWithPagedKVCacheWrapper:
         if rope_scale is None:
             rope_scale = 1.0
         if rope_theta is None:
-            rope_theta = 1e4
+            rope_theta = 10000.0
         if return_lse:
             if lse is None:
-                lse = torch.empty(
-                    (q.size(0), q.size(1)), dtype=torch.float32, device=q.device
-                )
+                lse = paddle.empty(shape=(q.shape[0], q.shape[1]), dtype="float32")
             else:
                 check_shape_dtype_device(
-                    lse, (q.size(0), q.size(1)), torch.float32, q.device, "lse"
+                    lse, (q.shape[0], q.shape[1]), "float32", q.place, "lse"
                 )
-
         if out is None:
-            out = torch.empty(
-                q.shape[:-1] + v_cache.shape[-1:], dtype=q.dtype, device=q.device
+            out = paddle.empty(
+                shape=tuple(q.shape)[:-1] + tuple(v_cache.shape)[-1:], dtype=q.dtype
             )
         else:
             check_shape_dtype_device(
-                out, q.shape[:-1] + v_cache.shape[-1:], q.dtype, q.device, "out"
+                out,
+                tuple(q.shape)[:-1] + tuple(v_cache.shape)[-1:],
+                q.dtype,
+                q.place,
+                "out",
             )
-
         if self._custom_mask_buf is not None:
             mask_mode = MaskMode.CUSTOM.value
+        elif self._causal:
+            mask_mode = MaskMode.CAUSAL.value
         else:
-            if self._causal:
-                mask_mode = MaskMode.CAUSAL.value
-            else:
-                mask_mode = MaskMode.NON_CAUSAL.value
-
+            mask_mode = MaskMode.NON_CAUSAL.value
         if self._prefix_len_ptr is not None:
             mask_mode = MaskMode.MULTIITEMSCORING.value
-
         if self._backend == "fa3":
-            # NOTE(Zihao): we divide both stride_block and stride_n by stride_n
-            # because we will multiply stride_n back in the kernel
             sparse_indices = block_sparse_indices_to_vector_sparse_offsets(
                 self._paged_kv_indices_buf,
                 self._paged_kv_indptr_buf,
-                self._vector_sparse_indices_buffer,  # output
+                self._vector_sparse_indices_buffer,
                 self._vector_sparse_indptr_buffer,
                 self._kv_lens_buffer,
                 stride_block // stride_n,
-                1,  # stride_n // stride_n
+                1,
                 page_size,
             )
             sparse_indptr = self._vector_sparse_indptr_buffer
         else:
             sparse_indices = self._paged_kv_indices_buf
             sparse_indptr = self._paged_kv_indptr_buf
-
         if self._backend == "cudnn":
             if self._seq_lens_q is not None and self._seq_lens_q.dim() == 1:
                 self._seq_lens_q = self._seq_lens_q.reshape(self._batch_size, 1, 1, 1)
-
             if self._seq_lens_kv is not None and self._seq_lens_kv.dim() == 1:
                 self._seq_lens_kv = self._seq_lens_kv.reshape(self._batch_size, 1, 1, 1)
-
             cudnn_batch_prefill_with_kv_cache(
                 q,
-                k_cache,  # Need to be changed
-                v_cache,  # Need to be changed
+                k_cache,
+                v_cache,
                 self._sm_scale,
                 self._float_workspace_buffer,
                 actual_seq_lens_q=self._seq_lens_q,
@@ -2126,15 +2011,15 @@ class BatchPrefillWithPagedKVCacheWrapper:
                 run_args += [
                     self._custom_mask_buf,
                     self._mask_indptr_buf,
-                    _get_cache_alibi_slopes_buf(q.shape[1], q.device),
+                    _get_cache_alibi_slopes_buf(tuple(q.shape)[1], q.place),
                     self._prefix_len_ptr,
                     self._token_pos_in_items_ptr,
                     self._max_item_len_ptr,
                     logits_soft_cap,
                     sm_scale,
-                    None,  # scale_q, not supported yet
-                    None,  # scale_k
-                    None,  # scale_v
+                    None,
+                    None,
+                    None,
                     rope_scale,
                     rope_theta,
                     self._token_pos_in_items_len,
@@ -2150,13 +2035,11 @@ class BatchPrefillWithPagedKVCacheWrapper:
                     self._vector_sparse_indptr_buffer,
                     sinks,
                 ]
-
             assert self._cached_module is not None, "cached module is not initialized"
             self._cached_module.paged_run(*run_args)
             if v_scale is not None:
-                # TODO(Zihao): fused into kernel
                 if is_float8(out):
-                    out = (out.to(torch.float32) * v_scale).to(out.dtype)
+                    out = (out.to("float32") * v_scale).to(out.dtype)
                 else:
                     out *= v_scale
         return (out, lse) if return_lse else out
@@ -2165,8 +2048,8 @@ class BatchPrefillWithPagedKVCacheWrapper:
 
     def forward_return_lse(
         self,
-        q: torch.Tensor,
-        paged_kv_cache: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        q: paddle.Tensor,
+        paged_kv_cache: Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]],
         causal: bool = False,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
@@ -2177,8 +2060,8 @@ class BatchPrefillWithPagedKVCacheWrapper:
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        r"""Warning: This function is deprecated, please use :meth:`run_return_lse` instead."""
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        """Warning: This function is deprecated, please use :meth:`run_return_lse` instead."""
         self._causal = causal
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
@@ -2190,26 +2073,25 @@ class BatchPrefillWithPagedKVCacheWrapper:
         return self.run_return_lse(q, paged_kv_cache, k_scale=k_scale, v_scale=v_scale)
 
     def end_forward(self) -> None:
-        r"""Warning: this function is deprecated and has no effect."""
+        """Warning: this function is deprecated and has no effect."""
         pass
 
 
 def _compute_mask_indptr(
-    qo_indptr: torch.Tensor, kv_indptr: torch.Tensor
-) -> torch.Tensor:
+    qo_indptr: paddle.Tensor, kv_indptr: paddle.Tensor
+) -> paddle.Tensor:
     if len(qo_indptr) != len(kv_indptr):
         raise ValueError("The length of qo_indptr and kv_indptr should be the same.")
-    mask_indptr = torch.empty_like(qo_indptr)
+    mask_indptr = paddle.empty_like(x=qo_indptr)
     mask_indptr[0] = 0
-    mask_indptr[1:] = torch.cumsum(
-        (qo_indptr[1:] - qo_indptr[:-1]) * (kv_indptr[1:] - kv_indptr[:-1]),
-        0,
+    mask_indptr[1:] = paddle.cumsum(
+        x=(qo_indptr[1:] - qo_indptr[:-1]) * (kv_indptr[1:] - kv_indptr[:-1]), axis=0
     )
     return mask_indptr
 
 
 class BatchPrefillWithRaggedKVCacheWrapper:
-    r"""Wrapper class for prefill/append attention with ragged (tensor) kv-cache for
+    """Wrapper class for prefill/append attention with ragged (tensor) kv-cache for
     batch of requests.
 
     Check :ref:`our tutorial <kv-layout>` for ragged kv-cache layout.
@@ -2301,18 +2183,18 @@ class BatchPrefillWithRaggedKVCacheWrapper:
 
     def __init__(
         self,
-        float_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
         kv_layout: str = "NHD",
         use_cuda_graph: bool = False,
-        qo_indptr_buf: Optional[torch.Tensor] = None,
-        kv_indptr_buf: Optional[torch.Tensor] = None,
-        custom_mask_buf: Optional[torch.Tensor] = None,
-        mask_indptr_buf: Optional[torch.Tensor] = None,
+        qo_indptr_buf: Optional[paddle.Tensor] = None,
+        kv_indptr_buf: Optional[paddle.Tensor] = None,
+        custom_mask_buf: Optional[paddle.Tensor] = None,
+        mask_indptr_buf: Optional[paddle.Tensor] = None,
         backend: str = "auto",
         jit_args: Optional[List[Any]] = None,
         jit_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        r"""Constructor of :class:`BatchPrefillWithRaggedKVCacheWrapper`.
+        """Constructor of :class:`BatchPrefillWithRaggedKVCacheWrapper`.
 
         Parameters
         ----------
@@ -2373,26 +2255,22 @@ class BatchPrefillWithRaggedKVCacheWrapper:
             )
         else:
             self._jit_module = None
-
         self._kv_layout = kv_layout
         self._float_workspace_buffer = float_workspace_buffer
-        self.device = float_workspace_buffer.device
-        self._int_workspace_buffer = torch.empty(
-            (8 * 1024 * 1024,), dtype=torch.uint8, device=self.device
+        self.device = float_workspace_buffer.place
+        self._int_workspace_buffer = paddle.empty(
+            shape=(8 * 1024 * 1024,), dtype="uint8"
         )
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
-            dtype=torch.uint8,
-            pin_memory=True,
-            device="cpu",
-        )
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape), dtype="uint8"
+        ).pin_memory()
         self._use_cuda_graph = use_cuda_graph
         if use_cuda_graph:
-            if not torch.is_tensor(qo_indptr_buf):
+            if not paddle.is_tensor(x=qo_indptr_buf):
                 raise ValueError(
                     "qo_indptr_buf should be a torch.Tensor in cuda graph mode"
                 )
-            if not torch.is_tensor(kv_indptr_buf):
+            if not paddle.is_tensor(x=kv_indptr_buf):
                 raise ValueError(
                     "kv_indptr_buf should be a torch.Tensor in cuda graph mode"
                 )
@@ -2403,9 +2281,6 @@ class BatchPrefillWithRaggedKVCacheWrapper:
                         len(kv_indptr_buf), self._fixed_batch_size
                     )
                 )
-            # NOTE(Zihao): do not check custom_mask_buf and mask_indptr_buf here,
-            # as they may not be used.
-
         self._qo_indptr_buf = qo_indptr_buf
         self._kv_indptr_buf = kv_indptr_buf
         self._custom_mask_buf = custom_mask_buf
@@ -2419,9 +2294,9 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         return self._use_cuda_graph
 
     def reset_workspace_buffer(
-        self, float_workspace_buffer: torch.Tensor, int_workspace_buffer
+        self, float_workspace_buffer: paddle.Tensor, int_workspace_buffer
     ) -> None:
-        r"""Reset the workspace buffer.
+        """Reset the workspace buffer.
 
         Parameters
         ----------
@@ -2435,23 +2310,21 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         """
         self._float_workspace_buffer = float_workspace_buffer
         self._int_workspace_buffer = int_workspace_buffer
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape),
             dtype=self._int_workspace_buffer.dtype,
-            device="cpu",
-            pin_memory=True,
-        )
+        ).pin_memory()
 
     def plan(
         self,
-        qo_indptr: torch.Tensor,
-        kv_indptr: torch.Tensor,
+        qo_indptr: paddle.Tensor,
+        kv_indptr: paddle.Tensor,
         num_qo_heads: int,
         num_kv_heads: int,
         head_dim_qk: int,
         head_dim_vo: Optional[int] = None,
-        custom_mask: Optional[torch.Tensor] = None,
-        packed_custom_mask: Optional[torch.Tensor] = None,
+        custom_mask: Optional[paddle.Tensor] = None,
+        packed_custom_mask: Optional[paddle.Tensor] = None,
         causal: bool = False,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
@@ -2460,15 +2333,15 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-        q_data_type: Union[str, torch.dtype] = "float16",
-        kv_data_type: Optional[Union[str, torch.dtype]] = None,
+        q_data_type: Union[str, paddle.dtype] = "float16",
+        kv_data_type: Optional[Union[str, paddle.dtype]] = None,
         non_blocking: bool = True,
-        prefix_len_ptr: Optional[torch.Tensor] = None,
-        token_pos_in_items_ptr: Optional[torch.Tensor] = None,
+        prefix_len_ptr: Optional[paddle.Tensor] = None,
+        token_pos_in_items_ptr: Optional[paddle.Tensor] = None,
         token_pos_in_items_len: int = 0,
-        max_item_len_ptr: Optional[torch.Tensor] = None,
+        max_item_len_ptr: Optional[paddle.Tensor] = None,
     ) -> None:
-        r"""Plan batch prefill/append attention on Ragged KV-Cache for given problem specification.
+        """Plan batch prefill/append attention on Ragged KV-Cache for given problem specification.
 
         Parameters
         ----------
@@ -2520,7 +2393,7 @@ class BatchPrefillWithRaggedKVCacheWrapper:
             The attention logits soft capping value (used in Gemini, Grok and Gemma-2, etc.), if not
             provided, will be set to ``0``. If greater than 0, the logits will be capped according to
             formula:
-            :math:`\texttt{logits_soft_cap} \times \mathrm{tanh}(x / \texttt{logits_soft_cap})`,
+            :math:`\\texttt{logits_soft_cap} \\times \\mathrm{tanh}(x / \\texttt{logits_soft_cap})`,
             where :math:`x` is the input logits.
         sm_scale : Optional[float]
             The scale used in softmax, if not provided, will be set to
@@ -2569,10 +2442,8 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         kv_data_type = canonicalize_torch_dtype(kv_data_type)
         if head_dim_vo is None:
             head_dim_vo = head_dim_qk
-
         if logits_soft_cap is None:
             logits_soft_cap = 0.0
-
         batch_size = len(qo_indptr) - 1
         if len(kv_indptr) != batch_size + 1:
             raise ValueError(
@@ -2581,70 +2452,57 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         if custom_mask is not None or packed_custom_mask is not None:
             mask_indptr = _compute_mask_indptr(qo_indptr, kv_indptr)
         if packed_custom_mask is None and custom_mask is not None:
-            # create packed custom mask from custom mask
             packed_custom_mask, mask_indptr = segment_packbits(
-                custom_mask.contiguous().view(-1),
-                mask_indptr,
-                bitorder="little",
+                custom_mask.contiguous().view(-1), mask_indptr, bitorder="little"
             )
-
-        # NOTE(Zihao): only required if qo_indptr/paged_kv_indptr are device tensors
         qo_indptr_host = qo_indptr.to("cpu")
         kv_indptr_host = kv_indptr.to("cpu")
-
         total_num_rows = qo_indptr_host[-1]
-
         if self.is_cuda_graph_enabled:
             if self._max_total_num_rows is None:
                 self._max_total_num_rows = total_num_rows
             elif total_num_rows > self._max_total_num_rows:
                 raise ValueError(
-                    "The total number of rows in qo_indptr {} in cuda graph mode cannot "
-                    "exceed the number of rows set during initialization {}.".format(
+                    "The total number of rows in qo_indptr {} in cuda graph mode cannot exceed the number of rows set during initialization {}.".format(
                         total_num_rows, self._max_total_num_rows
                     )
                 )
-
             if batch_size != self._fixed_batch_size:
                 raise ValueError(
-                    "The batch size should be fixed in cudagraph mode, the runtime batch size {} "
-                    " mismatches the batch size set during initialization {}.".format(
+                    "The batch size should be fixed in cudagraph mode, the runtime batch size {}  mismatches the batch size set during initialization {}.".format(
                         batch_size, self._fixed_batch_size
                     )
                 )
-            self._qo_indptr_buf.copy_(qo_indptr, non_blocking=non_blocking)
-            self._kv_indptr_buf.copy_(kv_indptr, non_blocking=non_blocking)
+            paddle.assign(qo_indptr, output=self._qo_indptr_buf)
+            paddle.assign(kv_indptr, output=self._kv_indptr_buf)
             if packed_custom_mask is not None:
-                if not torch.is_tensor(self._custom_mask_buf):
+                if not paddle.is_tensor(x=self._custom_mask_buf):
                     raise ValueError(
                         "custom_mask_buf must be initialized with a torch.Tensor in cuda graph mode if we use custom mask in attention computation."
                     )
-                if not torch.is_tensor(self._mask_indptr_buf):
+                if not paddle.is_tensor(x=self._mask_indptr_buf):
                     raise ValueError(
                         "mask_indptr_buf must be initialized with a torch.Tensor in cuda graph mode if we use custom mask in the attention computation."
                     )
                 self._custom_mask_buf[: len(packed_custom_mask)] = packed_custom_mask
-                self._mask_indptr_buf.copy_(mask_indptr, non_blocking=non_blocking)
+                paddle.assign(mask_indptr, output=self._mask_indptr_buf)
         else:
-            self._qo_indptr_buf = qo_indptr.to(self.device, non_blocking=non_blocking)
-            self._kv_indptr_buf = kv_indptr.to(self.device, non_blocking=non_blocking)
+            self._qo_indptr_buf = qo_indptr.to(self.device, blocking=not non_blocking)
+            self._kv_indptr_buf = kv_indptr.to(self.device, blocking=not non_blocking)
             if packed_custom_mask is not None:
                 self._custom_mask_buf = packed_custom_mask.to(
-                    self.device, non_blocking=non_blocking
+                    self.device, blocking=not non_blocking
                 )
                 self._mask_indptr_buf = mask_indptr.to(
-                    self.device, non_blocking=non_blocking
+                    self.device, blocking=not non_blocking
                 )
-
         self._cached_q_data_type = q_data_type
         self._cached_kv_data_type = kv_data_type
         kv_len_arr = kv_indptr_host[1:] - kv_indptr_host[:-1]
-
         self._prefix_len_ptr = prefix_len_ptr
         self._token_pos_in_items_ptr = token_pos_in_items_ptr
         self._token_pos_in_items_len = token_pos_in_items_len
         self._max_item_len_ptr = max_item_len_ptr
-
         if self._jit_module is not None:
             self._cached_module = self._jit_module
         else:
@@ -2653,11 +2511,10 @@ class BatchPrefillWithRaggedKVCacheWrapper:
                     self.device,
                     PosEncodingMode[pos_encoding_mode].value,
                     use_fp16_qk_reduction,
-                    self._custom_mask_buf is not None,  # use_custom_mask
+                    self._custom_mask_buf is not None,
                     q_data_type,
                     kv_data_type,
                 )
-
             get_module_args = (
                 q_data_type,
                 kv_data_type,
@@ -2666,8 +2523,8 @@ class BatchPrefillWithRaggedKVCacheWrapper:
                 head_dim_qk,
                 head_dim_vo,
                 PosEncodingMode[pos_encoding_mode].value,
-                window_left >= 0,  # use_sliding_window
-                logits_soft_cap > 0,  # use_logits_soft_cap
+                window_left >= 0,
+                logits_soft_cap > 0,
                 use_fp16_qk_reduction,
             )
             if self._backend == "cutlass":
@@ -2676,12 +2533,11 @@ class BatchPrefillWithRaggedKVCacheWrapper:
                 self._cached_module = get_batch_prefill_module(
                     self._backend, *get_module_args
                 )
-
         if self._backend == "cutlass":
             self._plan_info = fmha_varlen_plan(
                 self._cached_module, qo_indptr, kv_indptr, num_qo_heads, causal
             )
-            self._max_qo_len = torch.max(qo_indptr[1:] - qo_indptr[:-1]).item()
+            self._max_qo_len = paddle.max(x=qo_indptr[1:] - qo_indptr[:-1]).item()
         else:
             assert self._cached_module is not None, "cached module is not initialized"
             self._plan_info = self._cached_module.plan(
@@ -2695,13 +2551,12 @@ class BatchPrefillWithRaggedKVCacheWrapper:
                 batch_size,
                 num_qo_heads,
                 num_kv_heads,
-                1,  # page_size
+                1,
                 self.is_cuda_graph_enabled,
                 head_dim_qk,
                 head_dim_vo,
                 causal,
             )
-
         self._causal = causal
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
@@ -2715,9 +2570,9 @@ class BatchPrefillWithRaggedKVCacheWrapper:
 
     def forward(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
         causal: bool = False,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
@@ -2726,8 +2581,8 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-    ) -> torch.Tensor:
-        r"""Warning: This function is deprecated, please use :meth:`run` instead."""
+    ) -> paddle.Tensor:
+        """Warning: This function is deprecated, please use :meth:`run` instead."""
         self._causal = causal
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
@@ -2741,41 +2596,43 @@ class BatchPrefillWithRaggedKVCacheWrapper:
     @overload
     def run(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
         *args,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: Literal[False] = False,
         enable_pdl: Optional[bool] = None,
-    ) -> torch.Tensor: ...
+    ) -> paddle.Tensor:
+        ...
 
     @overload
     def run(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
         *args,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: Literal[True] = True,
         enable_pdl: Optional[bool] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]: ...
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        ...
 
     def run(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
         *args,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: bool = False,
         enable_pdl: Optional[bool] = None,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        r"""Compute batch prefill/append attention between query and kv-cache stored as
+    ) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
+        """Compute batch prefill/append attention between query and kv-cache stored as
         ragged tensor.
 
         Parameters
@@ -2807,11 +2664,10 @@ class BatchPrefillWithRaggedKVCacheWrapper:
             * The logsumexp of attention output, shape: ``[qo_indptr[-1], num_qo_heads]``.
         """
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(q.device)
+            enable_pdl = device_support_pdl(q.place)
         _check_cached_qkv_data_type(
             q, k, self._cached_q_data_type, self._cached_kv_data_type
         )
-
         window_left = self._window_left
         logits_soft_cap = self._logits_soft_cap
         sm_scale = self._sm_scale
@@ -2820,27 +2676,25 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         if logits_soft_cap is None:
             logits_soft_cap = 0.0
         if sm_scale is None:
-            sm_scale = 1.0 / math.sqrt(q.size(-1))
+            sm_scale = 1.0 / math.sqrt(q.shape[-1])
         if rope_scale is None:
             rope_scale = 1.0
         if rope_theta is None:
-            rope_theta = 1e4
+            rope_theta = 10000.0
         if return_lse:
             if lse is None:
-                lse = torch.empty(
-                    (q.size(0), q.size(1)), dtype=torch.float32, device=q.device
-                )
+                lse = paddle.empty(shape=(q.shape[0], q.shape[1]), dtype="float32")
             else:
                 check_shape_dtype_device(
-                    lse, (q.size(0), q.size(1)), torch.float32, q.device, "lse"
+                    lse, (q.shape[0], q.shape[1]), "float32", q.place, "lse"
                 )
         if out is None:
-            out = torch.empty(
-                q.shape[:-1] + v.shape[-1:], dtype=q.dtype, device=q.device
+            out = paddle.empty(
+                shape=tuple(q.shape)[:-1] + tuple(v.shape)[-1:], dtype=q.dtype
             )
         else:
             check_shape_dtype_device(
-                out, q.shape[:-1] + v.shape[-1:], q.dtype, q.device, "out"
+                out, tuple(q.shape)[:-1] + tuple(v.shape)[-1:], q.dtype, q.place, "out"
             )
         if self._backend == "cutlass":
             out, lse = fmha_varlen(
@@ -2857,24 +2711,19 @@ class BatchPrefillWithRaggedKVCacheWrapper:
                 lse=lse,
             )
             return (out, lse) if return_lse else out
-
         if is_float8(q):
             logging.warning(
-                "Our current prefill kernel implementation needs f16 input, the f8 inputs "
-                " are casted to f16, which could result in performance degradation."
+                "Our current prefill kernel implementation needs f16 input, the f8 inputs  are casted to f16, which could result in performance degradation."
             )
-            q = q.to(torch.float16)
-            k = k.to(torch.float16)
-            v = v.to(torch.float16)
-
+            q = q.to("float16")
+            k = k.to("float16")
+            v = v.to("float16")
         if self._custom_mask_buf is not None:
             mask_mode = MaskMode.CUSTOM.value
+        elif self._causal:
+            mask_mode = MaskMode.CAUSAL.value
         else:
-            if self._causal:
-                mask_mode = MaskMode.CAUSAL.value
-            else:
-                mask_mode = MaskMode.NON_CAUSAL.value
-
+            mask_mode = MaskMode.NON_CAUSAL.value
         run_args = [
             self._float_workspace_buffer,
             self._int_workspace_buffer,
@@ -2897,7 +2746,7 @@ class BatchPrefillWithRaggedKVCacheWrapper:
             run_args += [
                 self._custom_mask_buf,
                 self._mask_indptr_buf,
-                _get_cache_alibi_slopes_buf(q.shape[1], self.device),
+                _get_cache_alibi_slopes_buf(tuple(q.shape)[1], self.device),
                 self._prefix_len_ptr,
                 self._token_pos_in_items_ptr,
                 self._max_item_len_ptr,
@@ -2907,7 +2756,6 @@ class BatchPrefillWithRaggedKVCacheWrapper:
                 rope_theta,
                 self._token_pos_in_items_len,
             ]
-
         assert self._cached_module is not None, "cached module is not initialized"
         self._cached_module.ragged_run(*run_args)
         return (out, lse) if return_lse else out
@@ -2916,9 +2764,9 @@ class BatchPrefillWithRaggedKVCacheWrapper:
 
     def forward_return_lse(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
         causal: bool = False,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
@@ -2927,8 +2775,8 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        r"""Warning: This function is deprecated, please use :meth:`run_return_lse` instead."""
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        """Warning: This function is deprecated, please use :meth:`run_return_lse` instead."""
         self._causal = causal
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
@@ -2940,32 +2788,24 @@ class BatchPrefillWithRaggedKVCacheWrapper:
         return self.run_return_lse(q, k, v)
 
     def end_forward(self) -> None:
-        r"""Warning: this function is deprecated and has no effect."""
+        """Warning: this function is deprecated and has no effect."""
         pass
 
 
 def fmha_varlen_plan(
     module,
-    qo_segment_offsets: torch.Tensor,
-    kv_segment_offsets: torch.Tensor,
+    qo_segment_offsets: paddle.Tensor,
+    kv_segment_offsets: paddle.Tensor,
     num_qo_heads: int,
     causal: bool,
 ):
-    num_ctas = torch.cuda.get_device_properties(
-        qo_segment_offsets.device
+    num_ctas = paddle.device.cuda.get_device_properties(
+        device=device2str(qo_segment_offsets.place)
     ).multi_processor_count
-    work_indptr = torch.empty(
-        num_ctas + 1, device=qo_segment_offsets.device, dtype=torch.int32
-    )
-    qo_tile_indices = torch.empty(
-        131072, device=qo_segment_offsets.device, dtype=torch.int32
-    )
-    head_indices = torch.empty(
-        131072, device=qo_segment_offsets.device, dtype=torch.int32
-    )
-    batch_indices = torch.empty(
-        131072, device=qo_segment_offsets.device, dtype=torch.int32
-    )
+    work_indptr = paddle.empty(shape=num_ctas + 1, dtype="int32")
+    qo_tile_indices = paddle.empty(shape=[131072], dtype="int32")
+    head_indices = paddle.empty(shape=[131072], dtype="int32")
+    batch_indices = paddle.empty(shape=[131072], dtype="int32")
     module.plan(
         qo_segment_offsets,
         kv_segment_offsets,
@@ -2973,119 +2813,100 @@ def fmha_varlen_plan(
         qo_tile_indices,
         head_indices,
         batch_indices,
-        256,  # qo_tile_size
+        256,
         num_qo_heads,
         num_ctas,
         causal,
     )
-    return (
-        work_indptr,
-        qo_tile_indices,
-        head_indices,
-        batch_indices,
-    )
+    return work_indptr, qo_tile_indices, head_indices, batch_indices
 
 
 @overload
 def fmha_varlen(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    qo_segment_offsets: torch.Tensor,
-    kv_segment_offsets: torch.Tensor,
-    plan_info: Optional[List[torch.Tensor]] = None,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
+    qo_segment_offsets: paddle.Tensor,
+    kv_segment_offsets: paddle.Tensor,
+    plan_info: Optional[List[paddle.Tensor]] = None,
     max_qo_len: Optional[int] = None,
-    out: Optional[torch.Tensor] = None,
-    lse: Optional[torch.Tensor] = None,
+    out: Optional[paddle.Tensor] = None,
+    lse: Optional[paddle.Tensor] = None,
     causal: bool = False,
     sm_scale: Optional[float] = None,
     return_lse: Literal[False] = False,
-) -> torch.Tensor: ...
+) -> paddle.Tensor:
+    ...
 
 
 @overload
 def fmha_varlen(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    qo_segment_offsets: torch.Tensor,
-    kv_segment_offsets: torch.Tensor,
-    plan_info: Optional[List[torch.Tensor]] = None,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
+    qo_segment_offsets: paddle.Tensor,
+    kv_segment_offsets: paddle.Tensor,
+    plan_info: Optional[List[paddle.Tensor]] = None,
     max_qo_len: Optional[int] = None,
-    out: Optional[torch.Tensor] = None,
-    lse: Optional[torch.Tensor] = None,
+    out: Optional[paddle.Tensor] = None,
+    lse: Optional[paddle.Tensor] = None,
     causal: bool = False,
     sm_scale: Optional[float] = None,
     return_lse: Literal[True] = True,
-) -> Tuple[torch.Tensor, torch.Tensor]: ...
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    ...
 
 
 def fmha_varlen(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    qo_segment_offsets: torch.Tensor,
-    kv_segment_offsets: torch.Tensor,
-    plan_info: Optional[List[torch.Tensor]] = None,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
+    qo_segment_offsets: paddle.Tensor,
+    kv_segment_offsets: paddle.Tensor,
+    plan_info: Optional[List[paddle.Tensor]] = None,
     max_qo_len: Optional[int] = None,
-    out: Optional[torch.Tensor] = None,
-    lse: Optional[torch.Tensor] = None,
+    out: Optional[paddle.Tensor] = None,
+    lse: Optional[paddle.Tensor] = None,
     causal: bool = False,
     sm_scale: Optional[float] = None,
     return_lse: bool = False,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
     workspace_buffer = _get_cache_buf(
-        "fmha_varlen_cutlass_workspace", 32 * 1024 * 1024, q.device
+        "fmha_varlen_cutlass_workspace", 32 * 1024 * 1024, q.place
     )
     module = get_fmha_module(
         q.dtype,
         k.dtype,
         v.dtype,
-        torch.int32,
-        q.shape[2],
-        v.shape[2],
+        "int32",
+        tuple(q.shape)[2],
+        tuple(v.shape)[2],
         PosEncodingMode.NONE.value,
-        False,  # use_sliding_window
-        False,  # use_logits_soft_cap
+        False,
+        False,
     )
-
-    nnz_qo, num_qo_heads, head_dim_qk = q.shape
-    nnz_kv, num_kv_heads, head_dim_vo = v.shape
-
+    nnz_qo, num_qo_heads, head_dim_qk = tuple(q.shape)
+    nnz_kv, num_kv_heads, head_dim_vo = tuple(v.shape)
     mask_mode_code = 1 if causal else 0
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(head_dim_qk)
-
     qo_total_len = nnz_qo
     if max_qo_len is None:
-        max_qo_len = torch.max(qo_segment_offsets[1:] - qo_segment_offsets[:-1]).item()
-
+        max_qo_len = paddle.max(
+            x=qo_segment_offsets[1:] - qo_segment_offsets[:-1]
+        ).item()
     if plan_info is None:
         plan_info = fmha_varlen_plan(
             module, qo_segment_offsets, kv_segment_offsets, num_qo_heads, causal
         )
-
-    (
-        work_indptr,
-        qo_tile_indices,
-        head_indices,
-        batch_indices,
-    ) = plan_info
-
+    work_indptr, qo_tile_indices, head_indices, batch_indices = plan_info
     if out is None:
-        out = torch.empty(
-            qo_total_len + max(max_qo_len, 128),
-            num_qo_heads,
-            head_dim_vo,
-            device=q.device,
+        out = paddle.empty(
+            shape=[qo_total_len + max(max_qo_len, 128), num_qo_heads, head_dim_vo],
             dtype=q.dtype,
         )[max(max_qo_len, 128) :]
-
     if lse is None and return_lse:
-        lse = torch.empty(
-            qo_total_len, num_qo_heads, device=q.device, dtype=torch.float32
-        )
-
+        lse = paddle.empty(shape=[qo_total_len, num_qo_heads], dtype="float32")
     module.run(
         workspace_buffer,
         q,
@@ -3107,7 +2928,6 @@ def fmha_varlen(
         head_dim_vo,
         max_qo_len,
     )
-
     return out, lse
 
 
@@ -3120,11 +2940,11 @@ def get_trtllm_gen_fmha_module():
 
 
 def trtllm_ragged_attention_deepseek(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    workspace_buffer: torch.Tensor,
-    seq_lens: torch.Tensor,
+    query: paddle.Tensor,
+    key: paddle.Tensor,
+    value: paddle.Tensor,
+    workspace_buffer: paddle.Tensor,
+    seq_lens: paddle.Tensor,
     max_q_len: int,
     max_kv_len: int,
     bmm1_scale: float,
@@ -3132,15 +2952,15 @@ def trtllm_ragged_attention_deepseek(
     o_sf_scale: float,
     batch_size: int,
     window_left: int,
-    cum_seq_lens_q: torch.Tensor,
-    cum_seq_lens_kv: torch.Tensor,
+    cum_seq_lens_q: paddle.Tensor,
+    cum_seq_lens_kv: paddle.Tensor,
     enable_pdl: bool,
     is_causal: bool,
     return_lse: bool,
-    attention_sinks: Optional[torch.Tensor] = None,
-    out: Optional[torch.Tensor] = None,
-    lse: Optional[torch.Tensor] = None,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    attention_sinks: Optional[paddle.Tensor] = None,
+    out: Optional[paddle.Tensor] = None,
+    lse: Optional[paddle.Tensor] = None,
+) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
     """
     Parameters
     ----------
@@ -3190,31 +3010,24 @@ def trtllm_ragged_attention_deepseek(
         If return_lse is True, the output will be a tuple of two tensors, the first is the output tensor, the second is the lse tensor.
         If return_lse is False, the output will be a single tensor.
     """
-    assert query.shape[2] == 192 and key.shape[2] == 192 and value.shape[2] == 128, (
-        "currently only support deepseek r1 192 query and 128 value"
-    )
-
+    assert (
+        tuple(query.shape)[2] == 192
+        and tuple(key.shape)[2] == 192
+        and tuple(value.shape)[2] == 128
+    ), "currently only support deepseek r1 192 query and 128 value"
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(query.device)
-
+        enable_pdl = device_support_pdl(query.place)
     run_func = get_trtllm_gen_fmha_module().trtllm_ragged_attention
-    sm_count = get_device_sm_count(query.device)
+    sm_count = get_device_sm_count(query.place)
     if out is None:
-        out = torch.empty(
-            query.shape[0],
-            query.shape[1],
-            value.shape[2],
-            device=query.device,
+        out = paddle.empty(
+            shape=[tuple(query.shape)[0], tuple(query.shape)[1], tuple(value.shape)[2]],
             dtype=query.dtype,
         )
     if return_lse and lse is None:
-        lse = torch.empty(
-            query.shape[0],
-            query.shape[1],
-            device=query.device,
-            dtype=torch.float32,
+        lse = paddle.empty(
+            shape=[tuple(query.shape)[0], tuple(query.shape)[1]], dtype="float32"
         )
-
     run_func(
         out,
         query,
@@ -3244,26 +3057,26 @@ def trtllm_ragged_attention_deepseek(
 
 
 def trtllm_batch_context_with_kv_cache(
-    query: torch.Tensor,
-    kv_cache: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
-    workspace_buffer: torch.Tensor,
-    block_tables: torch.Tensor,
-    seq_lens: torch.Tensor,
+    query: paddle.Tensor,
+    kv_cache: Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]],
+    workspace_buffer: paddle.Tensor,
+    block_tables: paddle.Tensor,
+    seq_lens: paddle.Tensor,
     max_q_len: int,
     max_kv_len: int,
     bmm1_scale: float,
     bmm2_scale: float,
     batch_size: int,
-    cum_seq_lens_q: torch.Tensor,
-    cum_seq_lens_kv: torch.Tensor,
+    cum_seq_lens_q: paddle.Tensor,
+    cum_seq_lens_kv: paddle.Tensor,
     window_left: int = -1,
-    out: Optional[Union[torch.Tensor, FP4Tensor]] = None,
-    out_dtype: Optional[Union[torch.dtype, str]] = None,
+    out: Optional[Union[paddle.Tensor, FP4Tensor]] = None,
+    out_dtype: Optional[Union[paddle.dtype, str]] = None,
     o_sf_scale: Optional[float] = None,
     o_sf_vec_size: Optional[int] = None,
     enable_pdl: Optional[bool] = None,
-    sinks: Optional[List[torch.Tensor]] = None,
-) -> Union[torch.Tensor, FP4Tensor]:
+    sinks: Optional[List[paddle.Tensor]] = None,
+) -> Union[paddle.Tensor, FP4Tensor]:
     """
     Parameters
     ----------
@@ -3311,94 +3124,73 @@ def trtllm_batch_context_with_kv_cache(
     out: Union[torch.Tensor, FP4Tensor]
         output torch.Tensor or FP4Tensor.
     """
-
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(query.device)
-
+        enable_pdl = device_support_pdl(query.place)
     if isinstance(kv_cache, tuple):
         k_cache, v_cache = kv_cache
+    elif tuple(kv_cache.shape)[1] == 1:
+        k_cache, v_cache = kv_cache, kv_cache
     else:
-        if kv_cache.shape[1] == 1:
-            k_cache, v_cache = kv_cache, kv_cache
-        else:
-            assert kv_cache.shape[1] == 2, (
-                "When kv_cache is a single tensor, the second dimension must be 1 or 2"
-            )
-            # NOTE(Zihao): unbind transforms [num_pages, 2, ...] to ([num_pages, ...], [num_pages, ...])
-            # it doesn't change underlying storage
-            k_cache, v_cache = kv_cache.unbind(dim=1)
-
+        assert (
+            tuple(kv_cache.shape)[1] == 2
+        ), "When kv_cache is a single tensor, the second dimension must be 1 or 2"
+        k_cache, v_cache = kv_cache.unbind(axis=1)
     run_func = get_trtllm_gen_fmha_module().trtllm_paged_attention_context
-    sm_count = get_device_sm_count(query.device)
-
-    if out_dtype == "nvfp4" or (out_dtype is None and isinstance(out, FP4Tensor)):
-        assert query.dtype == torch.float8_e4m3fn, (
-            "query must be fp8 when out_dtype is nvfp4."
-        )
+    sm_count = get_device_sm_count(query.place)
+    if out_dtype == "nvfp4" or out_dtype is None and isinstance(out, FP4Tensor):
+        assert (
+>>>>>>            query.dtype == torch.float8_e4m3fn
+        ), "query must be fp8 when out_dtype is nvfp4."
         assert o_sf_scale is not None
         assert o_sf_vec_size in [None, 16], "only o_sf_vec_size = 16 is supported"
         o_sf_vec_size = o_sf_vec_size or 16
-
-        fp4_out_shape = query.shape[:-1] + (ceil_div(query.shape[-1], 2),)
-
+        fp4_out_shape = tuple(query.shape)[:-1] + (ceil_div(tuple(query.shape)[-1], 2),)
         if isinstance(out, FP4Tensor):
-            fp4_out_scale_shape = (
-                out.scale.shape[0],
-                round_up(query.shape[1] * query.shape[2] // o_sf_vec_size, 4),
+            fp4_out_scale_shape = out.scale.shape[0], round_up(
+                tuple(query.shape)[1] * tuple(query.shape)[2] // o_sf_vec_size, 4
             )
             out_scale_factor = out.scale
             o_sf_start_index = out.scale_start_index
             out = out.data
         elif out is None:
-            fp4_out_scale_shape = (
-                round_up(query.shape[0], 128),
-                round_up(query.shape[1] * query.shape[2] // o_sf_vec_size, 4),
+            fp4_out_scale_shape = round_up(tuple(query.shape)[0], 128), round_up(
+                tuple(query.shape)[1] * tuple(query.shape)[2] // o_sf_vec_size, 4
             )
-            out_scale_factor = torch.empty(
-                fp4_out_scale_shape, dtype=torch.float8_e4m3fn, device=query.device
+            out_scale_factor = paddle.empty(
+>>>>>>                shape=fp4_out_scale_shape, dtype=torch.float8_e4m3fn
             )
             o_sf_start_index = 0
-            out = torch.empty(fp4_out_shape, dtype=torch.uint8, device=query.device)
+            out = paddle.empty(shape=fp4_out_shape, dtype="uint8")
         else:
             raise ValueError(f"Invalid out: {out}")
-
-        assert isinstance(out, torch.Tensor)
-
-        # Use uint8 as the container dtype to compliant with next fp4 gemm.
-        check_shape_dtype_device(out, fp4_out_shape, torch.uint8, query.device, "out")
-
+        assert isinstance(out, paddle.Tensor)
+        check_shape_dtype_device(out, fp4_out_shape, "uint8", query.place, "out")
         check_shape_dtype_device(
             out_scale_factor,
             fp4_out_scale_shape,
-            torch.float8_e4m3fn,
-            query.device,
+>>>>>>            torch.float8_e4m3fn,
+            query.place,
             "out_scale_factor",
         )
-
-        # Check o_sf_start_index is valid
         if (
             o_sf_start_index < 0
-            or o_sf_start_index + out.shape[0] > out_scale_factor.shape[0]
+            or o_sf_start_index + tuple(out.shape)[0] > tuple(out_scale_factor.shape)[0]
         ):
             raise ValueError(
-                f"o_sf_start_index is out of the valid range of out_scale_factor. "
-                f"o_sf_start_index={o_sf_start_index}, out.shape[0]={out.shape[0]}, "
-                f"out_scale_factor.shape[0]={out_scale_factor.shape[0]}"
+                f"o_sf_start_index is out of the valid range of out_scale_factor. o_sf_start_index={o_sf_start_index}, out.shape[0]={tuple(out.shape)[0]}, out_scale_factor.shape[0]={tuple(out_scale_factor.shape)[0]}"
             )
-
-    elif isinstance(out_dtype, torch.dtype) or out_dtype is None:
+    elif isinstance(out_dtype, paddle.dtype) or out_dtype is None:
         assert o_sf_scale is None
         assert o_sf_vec_size is None
         out_scale_factor = None
         o_sf_start_index = 0
         out_dtype = out_dtype or query.dtype
-        if out_dtype not in (query.dtype, torch.float16, torch.bfloat16):
+        if out_dtype not in (query.dtype, "float16", "bfloat16"):
             raise ValueError(f"Unsupported out_dtype: {out_dtype}")
-        out = out if out is not None else torch.empty_like(query, dtype=out_dtype)
-        check_shape_dtype_device(out, query.shape, out_dtype, query.device, "out")
+        out = out if out is not None else paddle.empty_like(x=query, dtype=out_dtype)
+        check_shape_dtype_device(out, tuple(query.shape), out_dtype, query.place, "out")
     else:
         raise ValueError(f"Invalid out_dtype: {out_dtype}")
-
     run_func(
         out,
         out_scale_factor,
@@ -3426,5 +3218,5 @@ def trtllm_batch_context_with_kv_cache(
     return (
         out
         if out_dtype != "nvfp4"
-        else FP4Tensor(out, out_scale_factor, o_sf_start_index, query.shape)
+        else FP4Tensor(out, out_scale_factor, o_sf_start_index, tuple(query.shape))
     )

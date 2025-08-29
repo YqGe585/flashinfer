@@ -4,7 +4,7 @@ import os
 import shlex
 from typing import Sequence
 
-import torch
+import paddle
 
 from ..jit import JitSpec
 from ..jit import env as jit_env
@@ -18,7 +18,6 @@ def gen_nvshmem_module() -> JitSpec:
         + ["-lnvshmem_device"]
         + shlex.split(os.environ.get("NVSHMEM_LDFLAGS", ""))
     )
-
     return gen_jit_spec(
         "nvshmem",
         [jit_env.FLASHINFER_CSRC_DIR / "nvshmem_binding.cu"],
@@ -30,10 +29,8 @@ def gen_nvshmem_module() -> JitSpec:
 
 @functools.cache
 def get_nvshmem_module():
-    # Try to find libnvshmem_host.so first, fallback to libnvshmem_host.so.3
     lib_dirs = jit_env.get_nvshmem_lib_dirs()
     lib_path = None
-
     lib_names = ["libnvshmem_host.so", "libnvshmem_host.so.3"]
     for lib_dir in lib_dirs:
         for lib_name in lib_names:
@@ -43,19 +40,16 @@ def get_nvshmem_module():
                 break
         if lib_path is not None:
             break
-
     if lib_path is None:
         raise FileNotFoundError(
             f"Could not find libnvshmem_host.so or libnvshmem_host.so.3 in {lib_dirs}"
         )
-
     ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
     module = gen_nvshmem_module().build_and_load()
-
     return module
 
 
-def get_unique_id() -> torch.Tensor:
+def get_unique_id() -> paddle.Tensor:
     return get_nvshmem_module().nvshmem_get_unique_id()
 
 
@@ -63,22 +57,22 @@ def unique_id_size() -> int:
     return get_nvshmem_module().nvshmem_unique_id_size()
 
 
-def alloc_empty_unique_id() -> torch.Tensor:
-    return torch.zeros(unique_id_size(), dtype=torch.uint8, device="cpu")
+def alloc_empty_unique_id() -> paddle.Tensor:
+    return paddle.zeros(shape=unique_id_size(), dtype="uint8")
 
 
-def init(uid: torch.Tensor, rank: int, world_size: int) -> int:
+def init(uid: paddle.Tensor, rank: int, world_size: int) -> int:
     status = get_nvshmem_module().nvshmem_init(uid, rank, world_size)
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     return status
 
 
-def alltoall(dest: torch.Tensor, source: torch.Tensor) -> None:
+def alltoall(dest: paddle.Tensor, source: paddle.Tensor) -> None:
     return get_nvshmem_module().nvshmem_alltoall(dest, source)
 
 
 def finalize() -> None:
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     get_nvshmem_module().nvshmem_finalize()
 
 
@@ -90,11 +84,7 @@ def n_pes() -> int:
     return get_nvshmem_module().nvshmem_n_pes()
 
 
-def malloc(
-    shape: Sequence[int],
-    dtype: torch.dtype,
-    device: torch.device,
-) -> torch.Tensor:
+def malloc(shape: Sequence[int], dtype: paddle.dtype, device: str) -> paddle.Tensor:
     """Allocates memory using NVSHMEM collective malloc operation.
 
     This is a collective operation that requires participation by all PEs (Processing Elements).
@@ -114,7 +104,6 @@ def malloc(
     Reference:
         https://docs.nvidia.com/nvshmem/api/gen/api/memory.html#nvshmem-malloc-nvshmem-free-nvshmem-align
     """
-
     return get_nvshmem_module().nvshmem_malloc(shape, dtype, device)
 
 

@@ -1,77 +1,30 @@
-#################################################################################################
-#
-# Copyright (c) 2017 - 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: BSD-3-Clause
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 1. Redistributions of source code must retain the above copyright notice, this
-# list of conditions and the following disclaimer.
-#
-# 2. Redistributions in binary form must reproduce the above copyright notice,
-# this list of conditions and the following disclaimer in the documentation
-# and/or other materials provided with the distribution.
-#
-# 3. Neither the name of the copyright holder nor the names of its
-# contributors may be used to endorse or promote products derived from
-# this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-#################################################################################################
-
 """
 Data types and tags used for emitting CUTLASS C++ kernels
 """
-
 import enum
 import re
-
-# The following block implements enum.auto() for Python 3.5 variants that don't include it such
-# as the default 3.5.2 on Ubuntu 16.04.
-#
-# https://codereview.stackexchange.com/questions/177309/reimplementing-pythons-enum-auto-for-compatibility
 
 try:
     from enum import auto as enum_auto
 except ImportError:
     __cutlass_library_auto_enum = 0
 
-    def enum_auto() -> int:  # type: ignore[no-redef]
+    def enum_auto() -> int:
         global __cutlass_library_auto_enum
         i = __cutlass_library_auto_enum
         __cutlass_library_auto_enum += 1
         return i
 
 
-###################################################################################################
-
-
-#
 class GeneratorTarget(enum.Enum):
     Library = enum_auto()
 
 
-#
 GeneratorTargetNames = {GeneratorTarget.Library: "library"}
-#
-
-###################################################################################################
 
 
-#
 class DataType(enum.Enum):
-    void = enum_auto()  # primarily used to disable C tensor for epilogues
+    void = enum_auto()
     b1 = enum_auto()
     u2 = enum_auto()
     u4 = enum_auto()
@@ -120,7 +73,6 @@ class DataType(enum.Enum):
     invalid = enum_auto()
 
 
-#
 ShortDataTypeNames = {
     DataType.s32: "i",
     DataType.e4m3: "e4m3",
@@ -134,8 +86,6 @@ ShortDataTypeNames = {
     DataType.f6: "f6",
     DataType.f4: "f4",
 }
-
-#
 DataTypeNames = {
     DataType.void: "void",
     DataType.b1: "b1",
@@ -184,7 +134,6 @@ DataTypeNames = {
     DataType.cs32: "cs32",
     DataType.cs64: "cs64",
 }
-
 DataTypeTag = {
     DataType.void: "void",
     DataType.b1: "cutlass::uint1b_t",
@@ -233,7 +182,6 @@ DataTypeTag = {
     DataType.cs32: "cutlass::complex<cutlass::int32_t>",
     DataType.cs64: "cutlass::complex<cutlass::int64_t>",
 }
-
 DataTypeSize = {
     DataType.void: 0,
     DataType.b1: 1,
@@ -284,39 +232,30 @@ DataTypeSize = {
 }
 
 
-###################################################################################################
-#
 class BlasMode(enum.Enum):
     symmetric = enum_auto()
     hermitian = enum_auto()
 
 
-#
 BlasModeTag = {
     BlasMode.symmetric: "cutlass::BlasMode::kSymmetric",
     BlasMode.hermitian: "cutlass::BlasMode::kHermitian",
 }
 
 
-#
 class ComplexTransform(enum.Enum):
     none = enum_auto()
     conj = enum_auto()
 
 
-#
 ComplexTransformTag = {
     ComplexTransform.none: "cutlass::ComplexTransform::kNone",
     ComplexTransform.conj: "cutlass::ComplexTransform::kConjugate",
 }
-
-# Used for cutlass3x complex kernel collective mainloop builder instantiation
 ComplexTransformTag3x = {
     ComplexTransform.none: "cute::identity",
     ComplexTransform.conj: "cute::conjugate",
 }
-
-#
 RealComplexBijection = [
     (DataType.f16, DataType.cf16),
     (DataType.f32, DataType.cf32),
@@ -324,7 +263,6 @@ RealComplexBijection = [
 ]
 
 
-#
 def is_complex(data_type):
     return any(data_type == c for _r, c in RealComplexBijection)
 
@@ -351,7 +289,6 @@ def is_grouped(gemm_kind):
     )
 
 
-#
 def get_complex_from_real(real_type):
     for r, c in RealComplexBijection:
         if real_type == r:
@@ -359,7 +296,6 @@ def get_complex_from_real(real_type):
     return DataType.invalid
 
 
-#
 def get_real_from_complex(complex_type):
     for r, c in RealComplexBijection:
         if complex_type == c:
@@ -367,26 +303,20 @@ def get_real_from_complex(complex_type):
     return DataType.invalid
 
 
-# TMA requires an alignment of 128 bits for all data types
 def get_tma_alignment(data_type):
     if data_type == DataType.void:
         return 0
     elif DataTypeSize[data_type] == 6:
-        return 128  # 96B alignment for 16U6 format
+        return 128
     else:
         return 128 // DataTypeSize[data_type]
 
 
-#
 class ComplexMultiplyOp(enum.Enum):
     multiply_add = enum_auto()
     gaussian = enum_auto()
 
 
-###################################################################################################
-
-
-#
 class MathOperation(enum.Enum):
     multiply_add = enum_auto()
     multiply_add_saturate = enum_auto()
@@ -402,7 +332,6 @@ class MathOperation(enum.Enum):
     multiply_add_fast_accum = enum_auto()
 
 
-#
 MathOperationTag = {
     MathOperation.multiply_add: "cutlass::arch::OpMultiplyAdd",
     MathOperation.multiply_add_saturate: "cutlass::arch::OpMultiplyAddSaturate",
@@ -418,10 +347,7 @@ MathOperationTag = {
     MathOperation.multiply_add_fast_accum: "cutlass::arch::OpMultiplyAddFastAccum",
 }
 
-###################################################################################################
 
-
-#
 class LayoutType(enum.Enum):
     ColumnMajor = enum_auto()
     RowMajor = enum_auto()
@@ -445,7 +371,6 @@ class LayoutType(enum.Enum):
     TensorKCSRT = enum_auto()
 
 
-#
 LayoutTag = {
     LayoutType.ColumnMajor: "cutlass::layout::ColumnMajor",
     LayoutType.RowMajor: "cutlass::layout::RowMajor",
@@ -468,8 +393,6 @@ LayoutTag = {
     LayoutType.TensorKCSR: "cutlass::layout::TensorKCSR",
     LayoutType.TensorKCSRT: "cutlass::layout::TensorKCSRT",
 }
-
-#
 TransposedLayout = {
     LayoutType.ColumnMajor: LayoutType.RowMajor,
     LayoutType.RowMajor: LayoutType.ColumnMajor,
@@ -481,8 +404,6 @@ TransposedLayout = {
     LayoutType.RowMajorInterleaved64: LayoutType.ColumnMajorInterleaved64,
     LayoutType.TensorNHWC: LayoutType.TensorNHWC,
 }
-
-#
 ShortLayoutTypeNames = {
     LayoutType.ColumnMajor: "n",
     LayoutType.ColumnMajorInterleaved2: "n2",
@@ -505,8 +426,6 @@ ShortLayoutTypeNames = {
     LayoutType.TensorKCSR: "kcsr",
     LayoutType.TensorKCSRT: "kcsrt",
 }
-
-#
 ShortComplexLayoutNames = {
     (LayoutType.ColumnMajor, ComplexTransform.none): "n",
     (LayoutType.ColumnMajor, ComplexTransform.conj): "c",
@@ -515,7 +434,6 @@ ShortComplexLayoutNames = {
 }
 
 
-###################################################################################################
 class KernelScheduleType(enum.Enum):
     ScheduleAuto = enum_auto()
     Multistage = enum_auto()
@@ -534,18 +452,14 @@ class KernelScheduleType(enum.Enum):
     PtrArrayTmaWarpSpecializedCooperativeFP8FastAccum = enum_auto()
     PtrArrayTmaWarpSpecializedPingpong = enum_auto()
     PtrArrayTmaWarpSpecializedPingpongFP8FastAccum = enum_auto()
-
     BlockwiseTmaWarpSpecializedCooperative = enum_auto()
     PtrArrayBlockwiseTmaWarpSpecializedCooperative = enum_auto()
-
     TmaWarpSpecialized1SmSm100 = enum_auto()
     TmaWarpSpecialized2SmSm100 = enum_auto()
     ImplicitTmaWarpSpecialized1SmSm100 = enum_auto()
     ImplicitTmaWarpSpecialized2SmSm100 = enum_auto()
-
     PtrArrayTmaWarpSpecialized1SmSm100 = enum_auto()
     PtrArrayTmaWarpSpecialized2SmSm100 = enum_auto()
-
     PtrArrayTmaWarpSpecialized1SmBlockScaledSm100 = enum_auto()
     PtrArrayTmaWarpSpecialized2SmBlockScaledSm100 = enum_auto()
     PtrArrayNvf4TmaWarpSpecialized1SmSm100 = enum_auto()
@@ -554,35 +468,27 @@ class KernelScheduleType(enum.Enum):
     PtrArrayMxf4TmaWarpSpecialized2SmSm100 = enum_auto()
     PtrArrayMxf8f6f4TmaWarpSpecialized1SmSm100 = enum_auto()
     PtrArrayMxf8f6f4TmaWarpSpecialized2SmSm100 = enum_auto()
-
     SparseTmaWarpSpecialized1SmSm100 = enum_auto()
     SparseTmaWarpSpecialized2SmSm100 = enum_auto()
-
     BlockScaledTmaWarpSpecialized1SmSm100 = enum_auto()
     BlockScaledTmaWarpSpecialized2SmSm100 = enum_auto()
     Mxf8f6f4TmaWarpSpecialized1SmSm100 = enum_auto()
     Mxf8f6f4TmaWarpSpecialized2SmSm100 = enum_auto()
-
     BlockwiseTmaWarpSpecialized1SmSm100 = enum_auto()
     BlockwiseTmaWarpSpecialized2SmSm100 = enum_auto()
-
     PtrArrayBlockwiseTmaWarpSpecialized1SmSm100 = enum_auto()
     PtrArrayBlockwiseTmaWarpSpecialized2SmSm100 = enum_auto()
-
     Mxf4TmaWarpSpecialized1SmSm100 = enum_auto()
     Mxf4TmaWarpSpecialized2SmSm100 = enum_auto()
     Nvf4TmaWarpSpecialized1SmSm100 = enum_auto()
     Nvf4TmaWarpSpecialized2SmSm100 = enum_auto()
-
     Mxf8f6f4TmaWarpSpecializedCooperativeSm120 = enum_auto()
     Mxf8f6f4TmaWarpSpecializedPingpongSm120 = enum_auto()
     Nvf4TmaWarpSpecializedCooperativeSm120 = enum_auto()
     Nvf4TmaWarpSpecializedPingpongSm120 = enum_auto()
     Mxf4TmaWarpSpecializedCooperativeSm120 = enum_auto()
     Mxf4TmaWarpSpecializedPingpongSm120 = enum_auto()
-
     F8f6f4SparseTmaWarpSpecializedCooperativeSm120 = enum_auto()
-
     BlockwiseTmaWarpSpecializedCooperativeSm120 = enum_auto()
     BlockwiseTmaWarpSpecializedPingpongSm120 = enum_auto()
 
@@ -645,8 +551,6 @@ KernelScheduleTag = {
     KernelScheduleType.BlockwiseTmaWarpSpecializedCooperativeSm120: "cutlass::gemm::KernelTmaWarpSpecializedBlockwiseCooperativeSm120",
     KernelScheduleType.BlockwiseTmaWarpSpecializedPingpongSm120: "cutlass::gemm::KernelTmaWarpSpecializedBlockwisePingpongSm120",
 }
-
-#
 KernelScheduleSuffixes = {
     KernelScheduleType.ScheduleAuto: "",
     KernelScheduleType.Multistage: "_cpasync",
@@ -726,7 +630,6 @@ class EpilogueScheduleType(enum.Enum):
     PtrArrayTmaWarpSpecializedCooperative = enum_auto()
 
 
-#
 EpilogueScheduleTag = {
     EpilogueScheduleType.ScheduleAuto: "cutlass::epilogue::collective::EpilogueScheduleAuto",
     EpilogueScheduleType.EpilogueTransposed: "cutlass::gemm::EpilogueTransposed",
@@ -745,8 +648,6 @@ EpilogueScheduleTag = {
     EpilogueScheduleType.PtrArrayTmaWarpSpecializedCooperative: "cutlass::epilogue::PtrArrayTmaWarpSpecializedCooperative",
     EpilogueScheduleType.PtrArrayTmaWarpSpecializedPingpong: "cutlass::epilogue::PtrArrayTmaWarpSpecializedPingpong",
 }
-
-#
 EpilogueScheduleSuffixes = {
     EpilogueScheduleType.ScheduleAuto: "",
     EpilogueScheduleType.EpilogueTransposed: "",
@@ -772,14 +673,12 @@ class EpilogueFunctor3x(enum.Enum):
     LinearCombinationBlockScaleFactor = enum_auto()
 
 
-#
 EpilogueFunctor3xTag = {
     EpilogueFunctor3x.LinearCombination: "cutlass::epilogue::fusion::LinearCombination",
     EpilogueFunctor3x.LinearCombinationBlockScaleFactor: "cutlass::epilogue::fusion::LinCombBlockScaleFactor",
 }
 
 
-# TMA epilogues have certain alignment requirements as calculated in get_tma_alignment(data_type)
 def is_tma_epilogue(epilogue_schedule_type):
     return epilogue_schedule_type in [
         EpilogueScheduleType.ScheduleAuto,
@@ -797,9 +696,7 @@ def is_tma_epilogue(epilogue_schedule_type):
 def to_grouped_schedule(schedule, grouped):
     if not grouped:
         return schedule
-
     group_schedule_map = {
-        # SM90
         KernelScheduleType.TmaWarpSpecializedCooperative: KernelScheduleType.PtrArrayTmaWarpSpecializedCooperative,
         KernelScheduleType.BlockwiseTmaWarpSpecializedCooperative: KernelScheduleType.PtrArrayBlockwiseTmaWarpSpecializedCooperative,
         KernelScheduleType.TmaWarpSpecializedPingpong: KernelScheduleType.PtrArrayTmaWarpSpecializedPingpong,
@@ -808,7 +705,6 @@ def to_grouped_schedule(schedule, grouped):
         EpilogueScheduleType.TmaWarpSpecialized: EpilogueScheduleType.PtrArrayTmaWarpSpecializedPingpong,
         EpilogueScheduleType.TmaWarpSpecializedCooperative: EpilogueScheduleType.PtrArrayTmaWarpSpecializedCooperative,
         EpilogueScheduleType.NoSmemWarpSpecialized: EpilogueScheduleType.PtrArrayNoSmemWarpSpecialized,
-        # SM100
         KernelScheduleType.TmaWarpSpecialized1SmSm100: KernelScheduleType.PtrArrayTmaWarpSpecialized1SmSm100,
         KernelScheduleType.TmaWarpSpecialized2SmSm100: KernelScheduleType.PtrArrayTmaWarpSpecialized2SmSm100,
         KernelScheduleType.Nvf4TmaWarpSpecialized1SmSm100: KernelScheduleType.PtrArrayNvf4TmaWarpSpecialized1SmSm100,
@@ -822,7 +718,6 @@ def to_grouped_schedule(schedule, grouped):
         EpilogueScheduleType.TmaWarpSpecialized1Sm: EpilogueScheduleType.PtrArrayTmaWarpSpecialized1Sm,
         EpilogueScheduleType.TmaWarpSpecialized2Sm: EpilogueScheduleType.PtrArrayTmaWarpSpecialized2Sm,
     }
-
     return group_schedule_map[schedule]
 
 
@@ -832,78 +727,54 @@ class TileSchedulerType(enum.Enum):
     StreamK = enum_auto()
 
 
-#
 TileSchedulerTag = {
     TileSchedulerType.Default: "void",
     TileSchedulerType.Persistent: "cutlass::gemm::PersistentScheduler",
     TileSchedulerType.StreamK: "cutlass::gemm::StreamKScheduler",
 }
-
-#
 TileSchedulerSuffixes = {
     TileSchedulerType.Default: "",
     TileSchedulerType.Persistent: "",
     TileSchedulerType.StreamK: "_stream_k",
 }
 
-###################################################################################################
 
-
-#
 class SideMode(enum.Enum):
     Left = enum_auto()
     Right = enum_auto()
 
 
-#
 SideModeTag = {
     SideMode.Left: "cutlass::SideMode::kLeft",
     SideMode.Right: "cutlass::SideMode::kRight",
 }
-
-#
 ShortSideModeNames = {SideMode.Left: "ls", SideMode.Right: "rs"}
 
-###################################################################################################
 
-
-#
 class FillMode(enum.Enum):
     Lower = enum_auto()
     Upper = enum_auto()
 
 
-#
 FillModeTag = {
     FillMode.Lower: "cutlass::FillMode::kLower",
     FillMode.Upper: "cutlass::FillMode::kUpper",
 }
-
-#
 ShortFillModeNames = {FillMode.Lower: "l", FillMode.Upper: "u"}
 
-###################################################################################################
 
-
-#
 class DiagType(enum.Enum):
     NonUnit = enum_auto()
     Unit = enum_auto()
 
 
-#
 DiagTypeTag = {
     DiagType.NonUnit: "cutlass::DiagType::kNonUnit",
     DiagType.Unit: "cutlass::DiagType::kUnit",
 }
-
-#
 ShortDiagTypeNames = {DiagType.NonUnit: "nu", DiagType.Unit: "un"}
 
-###################################################################################################
 
-
-#
 class OpcodeClass(enum.Enum):
     Simt = enum_auto()
     TensorOp = enum_auto()
@@ -919,7 +790,6 @@ OpcodeClassNames = {
     OpcodeClass.SparseTensorOp: "sptensorop",
     OpcodeClass.BlockScaledTensorOp: "bstensorop",
 }
-
 OpcodeClassTag = {
     OpcodeClass.Simt: "cutlass::arch::OpClassSimt",
     OpcodeClass.TensorOp: "cutlass::arch::OpClassTensorOp",
@@ -928,10 +798,7 @@ OpcodeClassTag = {
     OpcodeClass.BlockScaledTensorOp: "cutlass::arch::OpClassBlockScaledTensorOp",
 }
 
-###################################################################################################
 
-
-#
 class OperationKind(enum.Enum):
     Gemm = enum_auto()
     RankK = enum_auto()
@@ -942,7 +809,6 @@ class OperationKind(enum.Enum):
     Conv3d = enum_auto()
 
 
-#
 OperationKindNames = {
     OperationKind.Gemm: "gemm",
     OperationKind.RankK: "rank_k",
@@ -954,39 +820,32 @@ OperationKindNames = {
 }
 
 
-#
 class Target(enum.Enum):
     library = enum_auto()
 
 
-#
 ArchitectureNames = {
-    50: "maxwell",
-    60: "pascal",
-    61: "pascal",
-    70: "volta",
-    75: "turing",
-    80: "ampere",
-    89: "ada",
-    90: "hopper",
+    (50): "maxwell",
+    (60): "pascal",
+    (61): "pascal",
+    (70): "volta",
+    (75): "turing",
+    (80): "ampere",
+    (89): "ada",
+    (90): "hopper",
 }
-
-#
 SharedMemPerCC = {
-    70: 96,  #  96KB of SMEM
-    72: 96,  #  96KB of SMEM
-    75: 64,  #  64KB of SMEM
-    80: 163,  # 163KB of SMEM - 1KB reserved for the driver
-    86: 99,  #  99KB of SMEM - 1KB reserved for the driver
-    87: 163,  # 163KB of SMEM - 1KB reserved for the driver
-    89: 99,  #  99KB of SMEM - 1KB reserved for the driver
-    90: 227,  # 227KB of SMEM - 1KB reserved for the driver
+    (70): 96,
+    (72): 96,
+    (75): 64,
+    (80): 163,
+    (86): 99,
+    (87): 163,
+    (89): 99,
+    (90): 227,
 }
 
-###################################################################################################
 
-
-#
 def SubstituteTemplate(template, values):
     text = template
     changed = True
@@ -1001,10 +860,6 @@ def SubstituteTemplate(template, values):
     return text
 
 
-###################################################################################################
-
-
-#
 class GemmKind(enum.Enum):
     Gemm = enum_auto()
     Sparse = enum_auto()
@@ -1021,7 +876,6 @@ class GemmKind(enum.Enum):
     GroupedBlockwiseUniversal3x = enum_auto()
 
 
-#
 GemmKindNames = {
     GemmKind.Gemm: "gemm",
     GemmKind.Sparse: "spgemm",
@@ -1039,54 +893,44 @@ GemmKindNames = {
 }
 
 
-#
 class RankKKind(enum.Enum):
     Universal = enum_auto()
 
 
-#
 RankKKindNames = {RankKKind.Universal: "rank_k"}
 
 
-#
 class TrmmKind(enum.Enum):
     Universal = enum_auto()
 
 
-#
 TrmmKindNames = {TrmmKind.Universal: "trmm"}
 
 
-#
 class SymmKind(enum.Enum):
     Universal = enum_auto()
 
 
-#
 SymmKindNames = {SymmKind.Universal: "symm"}
 
 
-#
 class EpilogueFunctor(enum.Enum):
     LinearCombination = enum_auto()
     LinearCombinationClamp = enum_auto()
 
 
-#
 EpilogueFunctorTag = {
     EpilogueFunctor.LinearCombination: "cutlass::epilogue::thread::LinearCombination",
     EpilogueFunctor.LinearCombinationClamp: "cutlass::epilogue::thread::LinearCombinationClamp",
 }
 
 
-#
 class MixedInputMode(enum.Enum):
     ConvertOnly = enum_auto()
     ScaleOnly = enum_auto()
     ScaleWithZeroPoint = enum_auto()
 
 
-#
 class SwizzlingFunctor(enum.Enum):
     Identity1 = enum_auto()
     Identity2 = enum_auto()
@@ -1099,7 +943,6 @@ class SwizzlingFunctor(enum.Enum):
     StreamK = enum_auto()
 
 
-#
 SwizzlingFunctorTag = {
     SwizzlingFunctor.Identity1: "cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<1>",
     SwizzlingFunctor.Identity2: "cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<2>",
@@ -1113,41 +956,32 @@ SwizzlingFunctorTag = {
 }
 
 
-#
 class GroupScheduleMode(enum.Enum):
     Device = (enum_auto(),)
     Host = enum_auto()
 
 
-#
 GroupScheduleModeTag = {
     GroupScheduleMode.Device: "cutlass::gemm::kernel::GroupScheduleMode::kDeviceOnly",
     GroupScheduleMode.Host: "cutlass::gemm::kernel::GroupScheduleMode::kHostPrecompute",
 }
-
-#
 ShortGroupScheduleModeNames = {
     GroupScheduleMode.Device: "Device",
     GroupScheduleMode.Host: "Host",
 }
 
-###################################################################################################
 
-
-#
 class ConvKind(enum.IntEnum):
     Fprop = 0
     Dgrad = 1
     Wgrad = 2
 
 
-#
 ConvKindTag = {
     ConvKind.Fprop: "cutlass::conv::Operator::kFprop",
     ConvKind.Dgrad: "cutlass::conv::Operator::kDgrad",
     ConvKind.Wgrad: "cutlass::conv::Operator::kWgrad",
 }
-
 ConvKindNames = {
     ConvKind.Fprop: "fprop",
     ConvKind.Dgrad: "dgrad",
@@ -1160,7 +994,6 @@ class ConvMode(enum.IntEnum):
     Convolution = 1
 
 
-#
 class IteratorAlgorithm(enum.Enum):
     Analytic = 0
     Optimized = 1
@@ -1169,7 +1002,6 @@ class IteratorAlgorithm(enum.Enum):
     FixedStrideDilation = 4
 
 
-#
 IteratorAlgorithmTag = {
     IteratorAlgorithm.Analytic: "cutlass::conv::IteratorAlgorithm::kAnalytic",
     IteratorAlgorithm.Optimized: "cutlass::conv::IteratorAlgorithm::kOptimized",
@@ -1177,7 +1009,6 @@ IteratorAlgorithmTag = {
     IteratorAlgorithm.FewChannels: "cutlass::conv::IteratorAlgorithm::kFewChannels",
     IteratorAlgorithm.FixedStrideDilation: "cutlass::conv::IteratorAlgorithm::kFixedStrideDilation",
 }
-
 IteratorAlgorithmNames = {
     IteratorAlgorithm.Analytic: "analytic",
     IteratorAlgorithm.Optimized: "optimized",
@@ -1187,20 +1018,17 @@ IteratorAlgorithmNames = {
 }
 
 
-#
 class StrideSupport(enum.Enum):
     Strided = 0
     Unity = 1
     Fixed = 2
 
 
-#
 StrideSupportTag = {
     StrideSupport.Strided: "cutlass::conv::StrideSupport::kStrided",
     StrideSupport.Unity: "cutlass::conv::StrideSupport::kUnity",
     StrideSupport.Fixed: "cutlass::conv::StrideSupport::kFixed",
 }
-
 StrideSupportNames = {
     StrideSupport.Strided: "",
     StrideSupport.Unity: "unity_stride",
@@ -1208,35 +1036,28 @@ StrideSupportNames = {
 }
 
 
-#
 class GroupMode(enum.Enum):
-    NoneGroup = enum_auto()  # dense conv (G=1)
-    SingleGroup = enum_auto()  # grouped convolution (single group per CTA)
-    MultipleGroup = enum_auto()  # grouped convolution ( multiple groups per CTA)
-    Depthwise = enum_auto()  # Depthwise convolution ( C=K=G )
+    NoneGroup = enum_auto()
+    SingleGroup = enum_auto()
+    MultipleGroup = enum_auto()
+    Depthwise = enum_auto()
 
 
-#
 GroupModeTag = {
     GroupMode.NoneGroup: "cutlass::conv::GroupMode::kNone",
     GroupMode.SingleGroup: "cutlass::conv::GroupMode::kSingleGroup",
     GroupMode.MultipleGroup: "cutlass::conv::GroupMode::kMultipleGroup",
     GroupMode.Depthwise: "cutlass::conv::GroupMode::kDepthwise",
 }
-
 GroupModeNames = {
     GroupMode.NoneGroup: "",
     GroupMode.SingleGroup: "single_group",
     GroupMode.MultipleGroup: "multiple_group",
     GroupMode.Depthwise: "depthwise",
 }
-
 DynamicClusterShape = [0, 0, 1]
 
-###################################################################################################
 
-
-#
 class MathInstruction:
     def __init__(
         self,
@@ -1257,7 +1078,6 @@ class MathInstruction:
         self.element_scale_factor = element_scale_factor
 
 
-#
 class TileDescription:
     def __init__(
         self,
@@ -1343,7 +1163,6 @@ class Direct2dConvFixedStrideDilationTileDescription:
             self.filter_shape[0],
             self.filter_shape[1],
         )
-        # Fixed Strided and dilation
         if self.stride != [-1, -1] and self.dilation != [-1, -1]:
             str_name += "_stride%dx%d_dilation%dx%d" % (
                 self.stride[0],
@@ -1354,7 +1173,6 @@ class Direct2dConvFixedStrideDilationTileDescription:
         return str_name
 
 
-#
 class TensorDescription:
     def __init__(
         self, element, layout, alignment=1, complex_transform=ComplexTransform.none
@@ -1365,7 +1183,6 @@ class TensorDescription:
         self.complex_transform = complex_transform
 
 
-#
 class SymmetricTensorDescription:
     def __init__(
         self,
@@ -1384,7 +1201,6 @@ class SymmetricTensorDescription:
         self.side_mode = side_mode
 
 
-#
 class TriangularTensorDescription:
     def __init__(
         self,
@@ -1405,40 +1221,33 @@ class TriangularTensorDescription:
         self.complex_transform = complex_transform
 
 
-#
 def CalculateSmemUsage(operation):
     cta_shape = operation.tile_description.threadblock_shape
     stages = operation.tile_description.stages
-
     if (
         operation.operation_kind == OperationKind.Gemm
         and operation.gemm_kind == GemmKind.Sparse
     ):
-        # Elements represented by 8 bits of metadata (based on 4:8, 2:4 or 1:2 sparsity)
         if DataTypeSize[operation.A.element] == 32:
             elements_per_8b_md = 2
         elif DataTypeSize[operation.A.element] == 4:
             elements_per_8b_md = 8
         else:
             elements_per_8b_md = 4
-
         smem_per_stage = (
             DataTypeSize[operation.A.element] * cta_shape[0] * (cta_shape[2] // 2) // 8
             + DataTypeSize[operation.B.element] * cta_shape[1] * cta_shape[2] // 8
             + cta_shape[0] * (cta_shape[2] // 2) // elements_per_8b_md
         )
     else:
-        # Few BLAS3 operations only have A tensor
         data_type_size_a = DataTypeSize[operation.A.element]
         data_type_size_b = DataTypeSize[operation.A.element]
         if operation.is_mixed_input():
             data_type_size_b = DataTypeSize[operation.B.element]
-
         smem_per_stage = (
             data_type_size_a * cta_shape[0] * cta_shape[2] // 8
             + data_type_size_b * cta_shape[1] * cta_shape[2] // 8
         )
-
     smem_usage = smem_per_stage * stages
     return smem_usage >> 10
 

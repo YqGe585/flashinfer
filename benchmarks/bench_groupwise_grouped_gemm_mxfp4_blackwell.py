@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,11 +15,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from itertools import product
 
 import numpy as np
-import torch
 
 import flashinfer
 from flashinfer.testing.utils import bench_gpu_time
@@ -26,50 +26,43 @@ from flashinfer.testing.utils import bench_gpu_time
 def bench_groupwise_grouped_gemm_mxfp4_blackwell(
     group_size, m, n, k, in_dtype, out_dtype
 ):
-    torch.random.manual_seed(0)
+    paddle.seed(seed=0)
     assert n % 8 == 0
     assert k % 128 == 0
     tile_size = 32
     alignment_sf = 128
-    fp8_info = torch.finfo(in_dtype)
+    fp8_info = paddle.finfo(dtype=in_dtype)
     a = (
-        torch.empty(group_size * m, k, dtype=torch.float32, device="cuda:0")
-        .uniform_(-fp8_info.max, fp8_info.max)
+        paddle.empty(shape=[group_size * m, k], dtype="float32")
+        .uniform_(min=-fp8_info.max, max=fp8_info.max)
         .to(in_dtype)
     )
-    b = torch.randint(
-        0, 256, (group_size, n, k // 2), dtype=torch.uint8, device="cuda:0"
-    )
-    out = torch.empty(group_size * m, n, dtype=out_dtype, device="cuda:0")
-
-    a_scale = torch.randint(
-        0,
-        256,
-        (
+    b = paddle.randint(low=0, high=256, shape=(group_size, n, k // 2), dtype="uint8")
+    out = paddle.empty(shape=[group_size * m, n], dtype=out_dtype)
+    a_scale = paddle.randint(
+        low=0,
+        high=256,
+        shape=(
             (group_size * m + (alignment_sf - 1) * group_size)
             // alignment_sf
             * alignment_sf,
             k // tile_size,
         ),
-        dtype=torch.uint8,
-        device="cuda:0",
+        dtype="uint8",
     )
-    b_scale = torch.randint(
-        0,
-        256,
-        (
+    b_scale = paddle.randint(
+        low=0,
+        high=256,
+        shape=(
             group_size,
             (n + alignment_sf - 1) // alignment_sf * alignment_sf,
             k // tile_size,
         ),
-        dtype=torch.uint8,
-        device="cuda:0",
+        dtype="uint8",
     )
-
-    segment_offsets = torch.arange(
-        0, (group_size + 1) * m, m, device="cuda:0", dtype=torch.int32
+    segment_offsets = paddle.arange(
+        start=0, end=(group_size + 1) * m, step=m, dtype="int32"
     )
-
     ms_best = float("inf")
     config_best = None
     mma_sm_list = [1, 2]
@@ -107,7 +100,7 @@ def bench_groupwise_grouped_gemm_mxfp4_blackwell(
                 "tile_k": tile_k,
                 "swap_ab": swap_ab,
             }
-    tflops_per_second = 2 * group_size * m * n * k * 1e-9 / ms_best
+    tflops_per_second = 2 * group_size * m * n * k * 1e-09 / ms_best
     print(
         f"group_gemm_mxfp4_nt_groupwise group_size={group_size} m={m} n={n} k={k} in_dtype={in_dtype} out_dtype={out_dtype}: {tflops_per_second:.2f} TFLOPs/s"
     )
@@ -121,5 +114,5 @@ if __name__ == "__main__":
             for n in [1024, 2048, 4096, 8192]:
                 for k in [1024, 2048, 4096, 8192]:
                     bench_groupwise_grouped_gemm_mxfp4_blackwell(
-                        group_size, m, n, k, torch.float8_e4m3fn, torch.bfloat16
+>>>>>>                        group_size, m, n, k, torch.float8_e4m3fn, "bfloat16"
                     )

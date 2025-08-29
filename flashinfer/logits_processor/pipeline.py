@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,15 +15,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import logging
 from typing import Any, List, Optional, Union
 
-import torch
-
 from .compiler import compile_pipeline
 from .fusion_rules import FusionRule
-from .legalization import LegalizationError, infer_initial_type, legalize_processors
+from .legalization import (LegalizationError, infer_initial_type,
+                           legalize_processors)
 from .op import Op
 from .processors import LogitsProcessor
 from .types import TaggedTensor, TensorType
@@ -101,21 +101,13 @@ class LogitsPipe:
         """
         if not processors:
             raise ValueError("Pipeline cannot be empty")
-
         self.processors = list(processors)
-
         try:
-            # Step 1: Infer initial input tensor type
             self._initial_type = input_type or infer_initial_type(self.processors)
-
-            # Step 2: Legalization - convert high-level processors to low-level ops
             self.ops = legalize_processors(self.processors, self._initial_type)
-
-            # Step 3: Compilation - type check, validate, and fuse ops
             self.compiled_ops: Optional[List[Op]] = None
             if compile:
                 self.compile(custom_fusion_rules, custom_validity_checks)
-
         except (LegalizationError, CompileError) as e:
             raise ValueError(f"Pipeline creation failed: {e}") from e
 
@@ -130,24 +122,20 @@ class LogitsPipe:
         return f"LogitsPipe([{' -> '.join(processor_names)}], ops=[{' -> '.join(op_names)}], compiled_ops=[{' -> '.join(compiled_op_names)}])"
 
     def __call__(
-        self, x: Union[torch.Tensor, TaggedTensor], **kwargs: Any
-    ) -> torch.Tensor:
+        self, x: Union[paddle.Tensor, TaggedTensor], **kwargs: Any
+    ) -> paddle.Tensor:
         if self.compiled_ops is None:
             logger.warning("Pipeline is not compiled, running discrete ops.")
             ops = self.ops
         else:
             ops = self.compiled_ops
-
         if isinstance(x, TaggedTensor):
             tagged_tensor = x
+        elif self._initial_type == TensorType.PROBS:
+            tagged_tensor = TaggedTensor.probs(x)
         else:
-            if self._initial_type == TensorType.PROBS:
-                tagged_tensor = TaggedTensor.probs(x)
-            else:
-                tagged_tensor = TaggedTensor.logits(x)
-
+            tagged_tensor = TaggedTensor.logits(x)
         runtime_kwargs = dict(kwargs)
-
         for i, op in enumerate(ops):
             try:
                 tagged_tensor = op(tagged_tensor, **runtime_kwargs)
@@ -155,7 +143,6 @@ class LogitsPipe:
                 raise ValueError(
                     f"Error executing operator {i} ({op.__class__.__name__}): {e}"
                 ) from e
-
         return tagged_tensor.data
 
     @property

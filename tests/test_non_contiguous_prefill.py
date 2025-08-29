@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,9 +19,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import pytest
-import torch
 from jit_utils import gen_prefill_attention_modules
 
 import flashinfer
@@ -25,13 +29,7 @@ import flashinfer
 def warmup_jit():
     flashinfer.jit.build_jit_specs(
         gen_prefill_attention_modules(
-            [torch.float16],  # q_dtypes
-            [torch.float16],  # kv_dtypes
-            [64, 128, 256],  # head_dims
-            [0],  # pos_encoding_modes
-            [False],  # use_sliding_windows
-            [False],  # use_logits_soft_caps
-            [False],  # use_fp16_qk_reductions
+            ["float16"], ["float16"], [64, 128, 256], [0], [False], [False], [False]
         ),
         verbose=False,
     )
@@ -48,11 +46,8 @@ def test_single_prefill_packed_input(
 ):
     if num_qo_heads % num_kv_heads != 0:
         pytest.skip("num_qo_heads must be a multiple of num_kv_heads")
-    qkv_packed = torch.randn(
-        seq_len,
-        (num_qo_heads + 2 * num_kv_heads) * head_dim,
-        dtype=torch.float16,
-        device="cuda:0",
+    qkv_packed = paddle.randn(
+        shape=[seq_len, (num_qo_heads + 2 * num_kv_heads) * head_dim], dtype="float16"
     )
     q = qkv_packed[:, : num_qo_heads * head_dim].reshape(
         seq_len, num_qo_heads, head_dim
@@ -63,13 +58,13 @@ def test_single_prefill_packed_input(
     v = qkv_packed[:, (num_qo_heads + num_kv_heads) * head_dim :].reshape(
         seq_len, num_kv_heads, head_dim
     )
-
     o_packed = flashinfer.single_prefill_with_kv_cache(q, k, v, causal=causal)
     o_contiguous = flashinfer.single_prefill_with_kv_cache(
         q.contiguous(), k.contiguous(), v.contiguous(), causal=causal
     )
-
-    torch.testing.assert_close(o_packed, o_contiguous, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(
+        x=o_packed, y=o_contiguous, rtol=0.001, atol=0.001
+    ).item(), ""
 
 
 @pytest.mark.parametrize("batch_size", [1, 19, 99])
@@ -84,11 +79,8 @@ def test_batch_ragged_prefill_packed_input(
     if num_qo_heads % num_kv_heads != 0:
         pytest.skip("num_qo_heads must be a multiple of num_kv_heads")
     nnz = batch_size * seq_len
-    qkv_packed = torch.randn(
-        nnz,
-        (num_qo_heads + 2 * num_kv_heads) * head_dim,
-        dtype=torch.float16,
-        device="cuda:0",
+    qkv_packed = paddle.randn(
+        shape=[nnz, (num_qo_heads + 2 * num_kv_heads) * head_dim], dtype="float16"
     )
     q = qkv_packed[:, : num_qo_heads * head_dim].reshape(nnz, num_qo_heads, head_dim)
     k = qkv_packed[
@@ -97,22 +89,22 @@ def test_batch_ragged_prefill_packed_input(
     v = qkv_packed[:, (num_qo_heads + num_kv_heads) * head_dim :].reshape(
         nnz, num_kv_heads, head_dim
     )
-    qo_indptr = torch.tensor(
-        [i * seq_len for i in range(batch_size + 1)], dtype=torch.int32, device="cuda:0"
+    qo_indptr = paddle.to_tensor(
+        data=[(i * seq_len) for i in range(batch_size + 1)],
+        dtype="int32",
+        place="gpu:0",
     )
     kv_indptr = qo_indptr
-
-    workspace_buffer = torch.empty(
-        (256 * 1024 * 1024,), dtype=torch.uint8, device="cuda:0"
-    )
+    workspace_buffer = paddle.empty(shape=(256 * 1024 * 1024,), dtype="uint8")
     wrapper = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(workspace_buffer)
     wrapper.plan(
         qo_indptr, kv_indptr, num_qo_heads, num_kv_heads, head_dim, causal=causal
     )
     o_packed = wrapper.run(q, k, v)
     o_contiguous = wrapper.run(q.contiguous(), k.contiguous(), v.contiguous())
-
-    torch.testing.assert_close(o_packed, o_contiguous, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(
+        x=o_packed, y=o_contiguous, rtol=0.001, atol=0.001
+    ).item(), ""
 
 
 @pytest.mark.parametrize("batch_size", [1, 19, 99])
@@ -123,44 +115,35 @@ def test_batch_ragged_prefill_packed_input(
 @pytest.mark.parametrize("head_dim", [64, 128, 256])
 @pytest.mark.parametrize("causal", [True, False])
 def test_batch_paged_prefill_packed_input(
-    batch_size,
-    page_size,
-    seq_len,
-    num_kv_heads,
-    num_qo_heads,
-    head_dim,
-    causal,
+    batch_size, page_size, seq_len, num_kv_heads, num_qo_heads, head_dim, causal
 ):
     if num_qo_heads % num_kv_heads != 0:
         pytest.skip("num_qo_heads must be a multiple of num_kv_heads")
-
     nnz = batch_size * seq_len
     num_pages_per_req = (seq_len + page_size - 1) // page_size
     num_pages = batch_size * num_pages_per_req
     last_page_len = (seq_len - 1) % page_size + 1
-    k_cache = torch.randn(
-        size=(num_pages, page_size, num_kv_heads, head_dim),
-        dtype=torch.float16,
-        device="cuda:0",
+    k_cache = paddle.randn(
+        shape=(num_pages, page_size, num_kv_heads, head_dim), dtype="float16"
     )
-    v_cache = torch.randn_like(k_cache)
-    paged_kv_cache = (k_cache, v_cache)
-    workspace_buffer = torch.empty(
-        (256 * 1024 * 1024,), dtype=torch.uint8, device="cuda:0"
+    v_cache = paddle.randn(shape=k_cache.shape, dtype=k_cache.dtype)
+    paged_kv_cache = k_cache, v_cache
+    workspace_buffer = paddle.empty(shape=(256 * 1024 * 1024,), dtype="uint8")
+    qo_indptr = paddle.to_tensor(
+        data=[(i * seq_len) for i in range(batch_size + 1)],
+        dtype="int32",
+        place="gpu:0",
     )
-    qo_indptr = torch.tensor(
-        [i * seq_len for i in range(batch_size + 1)], dtype=torch.int32, device="cuda:0"
+    paged_kv_indptr = paddle.to_tensor(
+        data=[(i * num_pages_per_req) for i in range(batch_size + 1)],
+        dtype="int32",
+        place="gpu:0",
     )
-    paged_kv_indptr = torch.tensor(
-        [i * num_pages_per_req for i in range(batch_size + 1)],
-        dtype=torch.int32,
-        device="cuda:0",
+    paged_kv_indices = paddle.to_tensor(
+        data=list(range(num_pages)), dtype="int32", place="gpu:0"
     )
-    paged_kv_indices = torch.tensor(
-        list(range(num_pages)), dtype=torch.int32, device="cuda:0"
-    )
-    paged_kv_last_page_len = torch.tensor(
-        [last_page_len for _ in range(batch_size)], dtype=torch.int32, device="cuda:0"
+    paged_kv_last_page_len = paddle.to_tensor(
+        data=[last_page_len for _ in range(batch_size)], dtype="int32", place="gpu:0"
     )
     wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(workspace_buffer)
     wrapper.plan(
@@ -174,11 +157,8 @@ def test_batch_paged_prefill_packed_input(
         page_size=page_size,
         causal=causal,
     )
-
-    qkv_packed = torch.randn(
-        size=(nnz, (num_qo_heads + 2 * num_kv_heads) * head_dim),
-        dtype=torch.float16,
-        device="cuda:0",
+    qkv_packed = paddle.randn(
+        shape=(nnz, (num_qo_heads + 2 * num_kv_heads) * head_dim), dtype="float16"
     )
     qkv_split_idx = (
         num_qo_heads * head_dim,
@@ -186,11 +166,12 @@ def test_batch_paged_prefill_packed_input(
         num_kv_heads * head_dim,
     )
     q, _, _ = qkv_packed.split(qkv_split_idx, dim=-1)
-    # pretend that we have already appended k/v to paged_kv table
     q = q.view(-1, num_qo_heads, head_dim)
     o_packed = wrapper.run(q, paged_kv_cache)
     o_contiguous = wrapper.run(q.contiguous(), paged_kv_cache)
-    torch.testing.assert_close(o_packed, o_contiguous, rtol=1e-3, atol=2e-3)
+    assert paddle.allclose(
+        x=o_packed, y=o_contiguous, rtol=0.001, atol=0.002
+    ).item(), ""
 
 
 if __name__ == "__main__":

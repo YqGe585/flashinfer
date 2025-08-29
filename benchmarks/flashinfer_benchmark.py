@@ -2,11 +2,9 @@ import argparse
 import sys
 
 from routines.attention import parse_attention_args, run_attention_test
-from routines.flashinfer_benchmark_utils import (
-    benchmark_apis,
-    full_output_columns,
-    output_column_dict,
-)
+from routines.flashinfer_benchmark_utils import (benchmark_apis,
+                                                 full_output_columns,
+                                                 output_column_dict)
 from routines.gemm import parse_gemm_args, run_gemm_test
 from routines.moe import parse_moe_args, run_moe_test
 
@@ -18,8 +16,6 @@ def run_test(args):
     Args:
         args: Parsed command line arguments containing test configuration
     """
-
-    ## Depending on routine type, route to corresponding test routine
     if args.routine in benchmark_apis["attention"]:
         res = run_attention_test(args)
     elif args.routine in benchmark_apis["gemm"]:
@@ -28,14 +24,11 @@ def run_test(args):
         res = run_moe_test(args)
     else:
         raise ValueError(f"Unsupported routine: {args.routine}")
-
-    # Write results to output file if specified
     if args.output_path is not None:
         with open(args.output_path, "a") as fout:
             for cur_res in res:
                 for key in output_column_dict["general"]:
                     cur_res[key] = getattr(args, key)
-
                 output_line = ",".join(
                     [str(cur_res[col]) for col in full_output_columns]
                 )
@@ -55,8 +48,6 @@ def parse_args(line=sys.argv[1:]):
     Returns:
         Parsed argument namespace
     """
-
-    ## Shared arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--routine",
@@ -68,7 +59,6 @@ def parse_args(line=sys.argv[1:]):
         + list(benchmark_apis["moe"]),
     )
     args, _ = parser.parse_known_args(line[:])
-
     parser.add_argument(
         "--no_cuda_graph",
         action="store_true",
@@ -136,8 +126,6 @@ def parse_args(line=sys.argv[1:]):
         default="",
         help="Placeholder for generated reproducer command for the test case. Not to be used directly.",
     )
-
-    ## Check routine and pass on to routine-specific argument parser
     if args.routine in benchmark_apis["attention"]:
         args = parse_attention_args(line, parser)
     elif args.routine in benchmark_apis["gemm"]:
@@ -146,14 +134,12 @@ def parse_args(line=sys.argv[1:]):
         args = parse_moe_args(line, parser)
     else:
         raise ValueError(f"Unsupported routine: {args.routine}")
-
     if args.generate_repro_command:
         args.repro_command = "python3 flashinfer_benchmark.py " + " ".join(line)
     return args
 
 
 if __name__ == "__main__":
-    # Parse testlist argument first
     testlist_parser = argparse.ArgumentParser(add_help=False)
     testlist_parser.add_argument(
         "--testlist",
@@ -170,15 +156,10 @@ if __name__ == "__main__":
         help="Output path for results csv.",
     )
     testlist_args, _ = testlist_parser.parse_known_args()
-
-    # Setup output file if specified
     if testlist_args.output_path is not None:
         with open(testlist_args.output_path, "w") as fout:
             fout.write(",".join(full_output_columns) + "\n")
-
-    # Process tests either from testlist file or command line arguments
     if testlist_args.testlist is not None:
-        # If testlist, run each test in the testlist
         with open(testlist_args.testlist, "r") as f:
             import shlex
 
@@ -195,7 +176,6 @@ if __name__ == "__main__":
                     print(f"[ERROR] Error: {e}")
                     continue
     else:
-        # If no testlist, just run the command
         args = parse_args()
         args.output_path = testlist_args.output_path
         run_test(args)

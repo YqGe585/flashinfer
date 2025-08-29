@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,10 +15,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import pytest
-import torch
-from jit_utils import gen_decode_attention_modules, gen_prefill_attention_modules
+from jit_utils import (gen_decode_attention_modules,
+                       gen_prefill_attention_modules)
 
 import flashinfer
 
@@ -25,21 +26,10 @@ import flashinfer
 def warmup_jit():
     flashinfer.jit.build_jit_specs(
         gen_decode_attention_modules(
-            [torch.float16],  # q_dtypes
-            [torch.float16],  # kv_dtypes
-            [128, 256],  # head_dims
-            [0],  # pos_encoding_modes
-            [False],  # use_sliding_windows
-            [False],  # use_logits_soft_caps
+            ["float16"], ["float16"], [128, 256], [0], [False], [False]
         )
         + gen_prefill_attention_modules(
-            [torch.float16],  # q_dtypes
-            [torch.float16],  # kv_dtypes
-            [128, 256],  # head_dims
-            [0],  # pos_encoding_modes
-            [False],  # use_sliding_windows
-            [False],  # use_logits_soft_caps
-            [False],  # use_fp16_qk_reductions
+            ["float16"], ["float16"], [128, 256], [0], [False], [False], [False]
         ),
         verbose=False,
     )
@@ -73,35 +63,71 @@ def test_batch_attention_with_shared_prefix_paged_kv_cache(
     assert shared_kv_len % page_size == 0
     kv_layout = "NHD"
     if stage == "append":
-        q = torch.randn(batch_size * unique_kv_len, num_heads, head_dim).to(0).half()
-        q_indptr = torch.arange(0, batch_size + 1).to(0).int() * unique_kv_len
+        q = (
+            paddle.randn(shape=[batch_size * unique_kv_len, num_heads, head_dim])
+            .to(0)
+            .astype(dtype="float16")
+        )
+        q_indptr = (
+            paddle.arange(start=0, end=batch_size + 1).to(0).astype(dtype="int32")
+            * unique_kv_len
+        )
     else:
-        q = torch.randn(batch_size, num_heads, head_dim).to(0).half()
-        q_indptr = torch.arange(0, batch_size + 1).to(0).int()
-    k_shared = torch.randn(shared_kv_len, num_heads, head_dim).to(0).half()
-    v_shared = torch.randn(shared_kv_len, num_heads, head_dim).to(0).half()
-    k_unique = torch.randn(batch_size * unique_kv_len, num_heads, head_dim).to(0).half()
-    v_unique = torch.randn(batch_size * unique_kv_len, num_heads, head_dim).to(0).half()
-
+        q = (
+            paddle.randn(shape=[batch_size, num_heads, head_dim])
+            .to(0)
+            .astype(dtype="float16")
+        )
+        q_indptr = (
+            paddle.arange(start=0, end=batch_size + 1).to(0).astype(dtype="int32")
+        )
+    k_shared = (
+        paddle.randn(shape=[shared_kv_len, num_heads, head_dim])
+        .to(0)
+        .astype(dtype="float16")
+    )
+    v_shared = (
+        paddle.randn(shape=[shared_kv_len, num_heads, head_dim])
+        .to(0)
+        .astype(dtype="float16")
+    )
+    k_unique = (
+        paddle.randn(shape=[batch_size * unique_kv_len, num_heads, head_dim])
+        .to(0)
+        .astype(dtype="float16")
+    )
+    v_unique = (
+        paddle.randn(shape=[batch_size * unique_kv_len, num_heads, head_dim])
+        .to(0)
+        .astype(dtype="float16")
+    )
     kv_data = (
-        torch.zeros(
-            ceil_div(shared_kv_len, page_size)
-            + batch_size * ceil_div(unique_kv_len, page_size),
-            2,
-            page_size,
-            num_heads,
-            head_dim,
+        paddle.zeros(
+            shape=[
+                ceil_div(shared_kv_len, page_size)
+                + batch_size * ceil_div(unique_kv_len, page_size),
+                2,
+                page_size,
+                num_heads,
+                head_dim,
+            ]
         )
         .to(0)
-        .half()
+        .astype(dtype="float16")
     )
-    shared_kv_indices = torch.arange(0, ceil_div(shared_kv_len, page_size)).to(0).int()
-    shared_append_indptr = torch.arange(0, 2).to(0).int() * shared_kv_len
-    shared_kv_indptr = torch.arange(0, 2).to(0).int() * ceil_div(
-        shared_kv_len, page_size
+    shared_kv_indices = (
+        paddle.arange(start=0, end=ceil_div(shared_kv_len, page_size))
+        .to(0)
+        .astype(dtype="int32")
     )
-    shared_last_page_len = torch.full(
-        (1,), (shared_kv_len - 1) % page_size + 1, dtype=torch.int32
+    shared_append_indptr = (
+        paddle.arange(start=0, end=2).to(0).astype(dtype="int32") * shared_kv_len
+    )
+    shared_kv_indptr = paddle.arange(start=0, end=2).to(0).astype(
+        dtype="int32"
+    ) * ceil_div(shared_kv_len, page_size)
+    shared_last_page_len = paddle.full(
+        shape=(1,), fill_value=(shared_kv_len - 1) % page_size + 1, dtype="int32"
     ).to(0)
     flashinfer.append_paged_kv_cache(
         k_shared,
@@ -109,23 +135,28 @@ def test_batch_attention_with_shared_prefix_paged_kv_cache(
         *flashinfer.get_batch_indices_positions(
             shared_append_indptr,
             flashinfer.get_seq_lens(shared_kv_indptr, shared_last_page_len, page_size),
-            k_shared.shape[0],
+            tuple(k_shared.shape)[0],
         ),
         kv_data,
         shared_kv_indices,
         shared_kv_indptr,
         shared_last_page_len,
-        kv_layout,
+        kv_layout
     )
-    unique_kv_indices = torch.arange(
-        0, batch_size * ceil_div(unique_kv_len, page_size)
-    ).to(0).int() + ceil_div(shared_kv_len, page_size)
-    unique_append_indptr = torch.arange(0, batch_size + 1).to(0).int() * unique_kv_len
-    unique_kv_indptr = torch.arange(0, batch_size + 1).to(0).int() * ceil_div(
-        unique_kv_len, page_size
+    unique_kv_indices = paddle.arange(
+        start=0, end=batch_size * ceil_div(unique_kv_len, page_size)
+    ).to(0).astype(dtype="int32") + ceil_div(shared_kv_len, page_size)
+    unique_append_indptr = (
+        paddle.arange(start=0, end=batch_size + 1).to(0).astype(dtype="int32")
+        * unique_kv_len
     )
-    unique_last_page_len = torch.full(
-        (batch_size,), (unique_kv_len - 1) % page_size + 1, dtype=torch.int32
+    unique_kv_indptr = paddle.arange(start=0, end=batch_size + 1).to(0).astype(
+        dtype="int32"
+    ) * ceil_div(unique_kv_len, page_size)
+    unique_last_page_len = paddle.full(
+        shape=(batch_size,),
+        fill_value=(unique_kv_len - 1) % page_size + 1,
+        dtype="int32",
     ).to(0)
     flashinfer.append_paged_kv_cache(
         k_unique,
@@ -133,37 +164,37 @@ def test_batch_attention_with_shared_prefix_paged_kv_cache(
         *flashinfer.get_batch_indices_positions(
             unique_append_indptr,
             flashinfer.get_seq_lens(unique_kv_indptr, unique_last_page_len, page_size),
-            k_unique.shape[0],
+            tuple(k_unique.shape)[0],
         ),
         kv_data,
         unique_kv_indices,
         unique_kv_indptr,
         unique_last_page_len,
-        kv_layout,
+        kv_layout
     )
-
     if stage == "decode":
         multi_level_wrapper = flashinfer.MultiLevelCascadeAttentionWrapper(
-            2, torch.empty(32 * 1024 * 1024, dtype=torch.int8).to(0), kv_layout
+            2, paddle.empty(shape=32 * 1024 * 1024, dtype="int8").to(0), kv_layout
         )
         shared_prefix_decode_wrapper = (
             flashinfer.BatchDecodeWithSharedPrefixPagedKVCacheWrapper(
-                torch.empty(32 * 1024 * 1024, dtype=torch.int8).to(0), kv_layout
+                paddle.empty(shape=32 * 1024 * 1024, dtype="int8").to(0), kv_layout
             )
         )
     else:
         multi_level_wrapper = flashinfer.MultiLevelCascadeAttentionWrapper(
-            2, torch.empty(32 * 1024 * 1024, dtype=torch.int8).to(0), kv_layout
+            2, paddle.empty(shape=32 * 1024 * 1024, dtype="int8").to(0), kv_layout
         )
         shared_prefix_prefill_wrapper = (
             flashinfer.BatchPrefillWithSharedPrefixPagedKVCacheWrapper(
-                torch.empty(32 * 1024 * 1024, dtype=torch.int8).to(0), kv_layout
+                paddle.empty(shape=32 * 1024 * 1024, dtype="int8").to(0), kv_layout
             )
         )
-
-    qo_indptr_top = torch.tensor([0, q.shape[0]], dtype=torch.int32).to(0)
+    qo_indptr_top = paddle.to_tensor(data=[0, tuple(q.shape)[0]], dtype="int32").to(0)
     if stage == "decode":
-        qo_indptr_bottom = torch.arange(0, batch_size + 1, dtype=torch.int32).to(0)
+        qo_indptr_bottom = paddle.arange(start=0, end=batch_size + 1, dtype="int32").to(
+            0
+        )
         multi_level_wrapper.plan(
             [qo_indptr_top, qo_indptr_bottom],
             [shared_kv_indptr, unique_kv_indptr],
@@ -177,7 +208,8 @@ def test_batch_attention_with_shared_prefix_paged_kv_cache(
         o_multi_level = multi_level_wrapper.run(q, kv_data)
     else:
         qo_indptr_bottom = (
-            torch.arange(0, batch_size + 1, dtype=torch.int32).to(0) * unique_kv_len
+            paddle.arange(start=0, end=batch_size + 1, dtype="int32").to(0)
+            * unique_kv_len
         )
         multi_level_wrapper.plan(
             [qo_indptr_top, qo_indptr_bottom],
@@ -191,7 +223,6 @@ def test_batch_attention_with_shared_prefix_paged_kv_cache(
             causal=causal,
         )
         o_multi_level = multi_level_wrapper.run(q, kv_data)
-
     if stage == "decode":
         shared_prefix_decode_wrapper.begin_forward(
             unique_kv_indptr,
@@ -219,8 +250,9 @@ def test_batch_attention_with_shared_prefix_paged_kv_cache(
         o_two_level = shared_prefix_prefill_wrapper.forward(
             q, k_shared, v_shared, kv_data, causal=causal
         )
-
-    torch.testing.assert_close(o_multi_level, o_two_level, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(
+        x=o_multi_level, y=o_two_level, rtol=0.001, atol=0.001
+    ).item(), ""
 
 
 @pytest.mark.parametrize("seed", [0])
@@ -229,48 +261,51 @@ def test_merge_state_in_place_with_mask(seed, num_tries):
     seq_len = 512
     num_heads = 32
     head_dim = 128
-    va = torch.randn(seq_len, num_heads, head_dim).half().to("cuda:0")
-    sa = torch.randn(seq_len, num_heads, dtype=torch.float32).to("cuda:0")
-    vb = torch.randn(seq_len, num_heads, head_dim).half().to("cuda:0")
-    sb = torch.randn(seq_len, num_heads, dtype=torch.float32).to("cuda:0")
+    va = (
+        paddle.randn(shape=[seq_len, num_heads, head_dim])
+        .astype(dtype="float16")
+        .to("gpu:0")
+    )
+    sa = paddle.randn(shape=[seq_len, num_heads], dtype="float32").to("gpu:0")
+    vb = (
+        paddle.randn(shape=[seq_len, num_heads, head_dim])
+        .astype(dtype="float16")
+        .to("gpu:0")
+    )
+    sb = paddle.randn(shape=[seq_len, num_heads], dtype="float32").to("gpu:0")
     va_orginal = va.clone()
     sa_original = sa.clone()
-
-    # No mask.
     flashinfer.merge_state_in_place(va, sa, vb, sb)
     va_merged_ref = va.clone()
     sa_merged_ref = sa.clone()
-    assert not torch.allclose(va_merged_ref, va_orginal)
-    assert not torch.allclose(sa_merged_ref, sa_original)
-
-    # Mask with all 1s. Should be identical to no mask.
-    mask = torch.ones(seq_len, dtype=torch.bool).to("cuda:0")
+    assert not paddle.allclose(x=va_merged_ref, y=va_orginal).item()
+    assert not paddle.allclose(x=sa_merged_ref, y=sa_original).item()
+    mask = paddle.ones(shape=seq_len, dtype="bool").to("gpu:0")
     va = va_orginal.clone()
     sa = sa_original.clone()
     flashinfer.merge_state_in_place(va, sa, vb, sb, mask=mask)
     va_merged = va
     sa_merged = sa
-    torch.testing.assert_close(va_merged, va_merged_ref, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(sa_merged, sa_merged_ref, rtol=1e-3, atol=1e-3)
-
-    # Mask with all zeros. Input and output should be identical.
-    mask = torch.zeros(seq_len, dtype=torch.bool).to("cuda:0")
+    assert paddle.allclose(
+        x=va_merged, y=va_merged_ref, rtol=0.001, atol=0.001
+    ).item(), ""
+    assert paddle.allclose(
+        x=sa_merged, y=sa_merged_ref, rtol=0.001, atol=0.001
+    ).item(), ""
+    mask = paddle.zeros(shape=seq_len, dtype="bool").to("gpu:0")
     va = va_orginal.clone()
     sa = sa_original.clone()
     flashinfer.merge_state_in_place(va, sa, vb, sb, mask=mask)
     va_merged = va
     sa_merged = sa
-    torch.testing.assert_close(va_merged, va_orginal, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(sa_merged, sa_original, rtol=1e-3, atol=1e-3)
-
-    # Test some random masks.
-    randgen = torch.Generator(device="cuda:0")
+    assert paddle.allclose(x=va_merged, y=va_orginal, rtol=0.001, atol=0.001).item(), ""
+    assert paddle.allclose(
+        x=sa_merged, y=sa_original, rtol=0.001, atol=0.001
+    ).item(), ""
+    randgen = paddle.framework.core.default_cpu_generator()
     randgen.manual_seed(seed)
     for _ in range(num_tries):
-        rand_mask = (
-            torch.rand(seq_len, generator=randgen, dtype=torch.float32, device="cuda:0")
-            > 0.5
-        ).to(dtype=torch.bool)
+        rand_mask = (paddle.rand(shape=seq_len, dtype="float32") > 0.5).to(dtype="bool")
         true_indices = rand_mask.nonzero()
         false_indices = (rand_mask == 0).nonzero()
         va = va_orginal.clone()
@@ -278,31 +313,30 @@ def test_merge_state_in_place_with_mask(seed, num_tries):
         flashinfer.merge_state_in_place(va, sa, vb, sb, mask=rand_mask)
         va_merged = va
         sa_merged = sa
-
-        torch.testing.assert_close(
-            va_merged[false_indices],
-            va_orginal[false_indices],
-            rtol=1e-3,
-            atol=1e-3,
-        )
-        torch.testing.assert_close(
-            sa_merged[false_indices],
-            sa_original[false_indices],
-            rtol=1e-3,
-            atol=1e-3,
-        )
-        torch.testing.assert_close(
-            va_merged[true_indices],
-            va_merged_ref[true_indices],
-            rtol=1e-3,
-            atol=1e-3,
-        )
-        torch.testing.assert_close(
-            sa_merged[true_indices],
-            sa_merged_ref[true_indices],
-            rtol=1e-3,
-            atol=1e-3,
-        )
+        assert paddle.allclose(
+            x=va_merged[false_indices],
+            y=va_orginal[false_indices],
+            rtol=0.001,
+            atol=0.001,
+        ).item(), ""
+        assert paddle.allclose(
+            x=sa_merged[false_indices],
+            y=sa_original[false_indices],
+            rtol=0.001,
+            atol=0.001,
+        ).item(), ""
+        assert paddle.allclose(
+            x=va_merged[true_indices],
+            y=va_merged_ref[true_indices],
+            rtol=0.001,
+            atol=0.001,
+        ).item(), ""
+        assert paddle.allclose(
+            x=sa_merged[true_indices],
+            y=sa_merged_ref[true_indices],
+            rtol=0.001,
+            atol=0.001,
+        ).item(), ""
 
 
 if __name__ == "__main__":

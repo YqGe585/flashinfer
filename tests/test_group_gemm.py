@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,21 +19,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import pytest
-import torch
 
 import flashinfer
 from flashinfer.utils import determine_gemm_backend, is_sm90a_supported
 
-DTYPES = [torch.float16]
+DTYPES = ["float16"]
 CUDA_DEVICES = ["cuda:0"]
 
 
 @pytest.fixture(autouse=True, scope="module")
 def warmup_jit():
     jit_specs = [flashinfer.gemm.gen_gemm_module()]
-    if is_sm90a_supported(torch.device("cuda:0")):
+    if is_sm90a_supported(device2str("cuda:0")):
         jit_specs.append(flashinfer.gemm.gen_gemm_sm90_module())
     flashinfer.jit.build_jit_specs(jit_specs, verbose=False)
     yield
@@ -53,71 +57,73 @@ def test_segment_gemm(
     device,
     backend,
 ):
-    torch.manual_seed(42)
+    paddle.seed(seed=42)
     if batch_size * num_rows_per_batch > 8192:
         pytest.skip("batch_size * num_rows_per_batch too large for test.")
-    latest_supported_backend = determine_gemm_backend(torch.device(device))
+    latest_supported_backend = determine_gemm_backend(device2str(device))
     if backend == "sm90" and latest_supported_backend == "sm80":
         pytest.skip("sm90 backend not supported on this device.")
-    torch.manual_seed(42)
-    workspace_buffer = torch.empty(32 * 1024 * 1024, dtype=torch.int8, device=device)
+    paddle.seed(seed=42)
+    workspace_buffer = paddle.empty(shape=32 * 1024 * 1024, dtype="int8")
     segment_gemm = flashinfer.gemm.SegmentGEMMWrapper(workspace_buffer, backend=backend)
-    x = torch.randn(batch_size * num_rows_per_batch, d_in, dtype=dtype, device=device)
+    x = paddle.randn(shape=[batch_size * num_rows_per_batch, d_in], dtype=dtype)
     if use_weight_indices:
         num_weights = 1024
         if column_major:
-            weight = torch.randn(num_weights, d_out, d_in, dtype=dtype, device=device)
+            weight = paddle.randn(shape=[num_weights, d_out, d_in], dtype=dtype)
         else:
-            weight = torch.randn(num_weights, d_in, d_out, dtype=dtype, device=device)
+            weight = paddle.randn(shape=[num_weights, d_in, d_out], dtype=dtype)
+    elif column_major:
+        weight = paddle.randn(shape=[batch_size, d_out, d_in], dtype=dtype)
     else:
-        if column_major:
-            weight = torch.randn(batch_size, d_out, d_in, dtype=dtype, device=device)
-        else:
-            weight = torch.randn(batch_size, d_in, d_out, dtype=dtype, device=device)
+        weight = paddle.randn(shape=[batch_size, d_in, d_out], dtype=dtype)
     y = segment_gemm.run(
         x,
         weight,
         batch_size,
         weight_column_major=column_major,
-        seg_lens=torch.full((batch_size,), num_rows_per_batch, dtype=torch.int64),
-        weight_indices=(
-            (torch.arange(0, batch_size, device=device) % num_weights)
-            if use_weight_indices
-            else None
+        seg_lens=paddle.full(
+            shape=(batch_size,), fill_value=num_rows_per_batch, dtype="int64"
         ),
+        weight_indices=paddle.arange(start=0, end=batch_size) % num_weights
+        if use_weight_indices
+        else None,
     )
-
     if use_weight_indices:
         for i in range(batch_size):
-            torch.testing.assert_close(
-                y[i * num_rows_per_batch : (i + 1) * num_rows_per_batch],
-                torch.matmul(
-                    x[i * num_rows_per_batch : (i + 1) * num_rows_per_batch].float(),
-                    (
-                        weight[i % num_weights].float().T
-                        if column_major
-                        else weight[i % num_weights].float()
+            assert paddle.allclose(
+                x=y[i * num_rows_per_batch : (i + 1) * num_rows_per_batch],
+                y=paddle.matmul(
+                    x=x[i * num_rows_per_batch : (i + 1) * num_rows_per_batch].astype(
+                        dtype="float32"
                     ),
+                    y=weight[i % num_weights].astype(dtype="float32").T
+                    if column_major
+                    else weight[i % num_weights].astype(dtype="float32"),
                 ).to(dtype),
-                rtol=1e-3,
-                atol=1e-3,
-            )
+                rtol=0.001,
+                atol=0.001,
+            ).item(), ""
     else:
-        torch.testing.assert_close(
-            y,
-            torch.matmul(
-                x.view(batch_size, num_rows_per_batch, d_in).float(),
-                weight.float().transpose(-1, -2) if column_major else weight.float(),
+        assert paddle.allclose(
+            x=y,
+            y=paddle.matmul(
+                x=x.view(batch_size, num_rows_per_batch, d_in).astype(dtype="float32"),
+                y=weight.astype(dtype="float32").transpose(
+                    perm=dim2perm(weight.astype(dtype="float32").ndim, -1, -2)
+                )
+                if column_major
+                else weight.astype(dtype="float32"),
             )
             .view(batch_size * num_rows_per_batch, d_out)
             .to(dtype),
-            rtol=1e-3,
-            atol=2e-3,
-        )
+            rtol=0.001,
+            atol=0.002,
+        ).item(), ""
 
 
 if __name__ == "__main__":
-    test_segment_gemm(199, 17, 128, 1024, False, False, torch.float16, "cuda:0", "auto")
-    test_segment_gemm(199, 17, 128, 1024, False, True, torch.float16, "cuda:0", "auto")
-    test_segment_gemm(199, 17, 128, 1024, True, False, torch.float16, "cuda:0", "auto")
-    test_segment_gemm(199, 17, 128, 1024, True, True, torch.float16, "cuda:0", "auto")
+    test_segment_gemm(199, 17, 128, 1024, False, False, "float16", "cuda:0", "auto")
+    test_segment_gemm(199, 17, 128, 1024, False, True, "float16", "cuda:0", "auto")
+    test_segment_gemm(199, 17, 128, 1024, True, False, "float16", "cuda:0", "auto")
+    test_segment_gemm(199, 17, 128, 1024, True, True, "float16", "cuda:0", "auto")

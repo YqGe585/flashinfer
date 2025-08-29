@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,22 +15,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from types import SimpleNamespace
 from typing import Optional, Union
 
-import torch
-
 from .jit import JitSpec
 from .jit import env as jit_env
 from .jit import gen_jit_spec
-from .utils import (
-    _get_cache_buf,
-    device_support_pdl,
-    register_custom_op,
-    register_fake_op,
-)
+from .utils import (_get_cache_buf, device_support_pdl, register_custom_op,
+                    register_fake_op)
 
 
 def gen_sampling_module() -> JitSpec:
@@ -48,16 +43,18 @@ def get_sampling_module():
 
     @register_custom_op("flashinfer::softmax", mutates_args=("workspace_buffer",))
     def softmax(
-        workspace_buffer: torch.Tensor,
-        logits: torch.Tensor,
-        maybe_temperature_arr: Optional[torch.Tensor],
+        workspace_buffer: paddle.Tensor,
+        logits: paddle.Tensor,
+        maybe_temperature_arr: Optional[paddle.Tensor],
         temperature_val: float,
         enable_pdl: bool,
-    ) -> torch.Tensor:
-        logits = logits.float()
-        probs = torch.empty_like(logits, device=logits.device)
+    ) -> paddle.Tensor:
+        logits = logits.astype(dtype="float32")
+        probs = paddle.empty_like(x=logits)
         maybe_temperature_arr = (
-            maybe_temperature_arr.float() if maybe_temperature_arr is not None else None
+            maybe_temperature_arr.astype(dtype="float32")
+            if maybe_temperature_arr is not None
+            else None
         )
         module.softmax.default(
             workspace_buffer,
@@ -71,99 +68,84 @@ def get_sampling_module():
 
     @register_fake_op("flashinfer::softmax")
     def _fake_softmax(
-        workspace_buffer: torch.Tensor,
-        logits: torch.Tensor,
-        maybe_temperature_arr: Optional[torch.Tensor],
+        workspace_buffer: paddle.Tensor,
+        logits: paddle.Tensor,
+        maybe_temperature_arr: Optional[paddle.Tensor],
         temperature_val: float,
         enable_pdl: bool,
-    ) -> torch.Tensor:
-        return torch.empty_like(logits, device=logits.device, dtype=torch.float32)
+    ) -> paddle.Tensor:
+        return paddle.empty_like(x=logits, dtype="float32")
 
-    # torch library for sampling_from_logits
     @register_custom_op("flashinfer::sampling_from_logits", mutates_args=())
     def sampling_from_logits(
-        logits: torch.Tensor,
-        indices: Optional[torch.Tensor],
+        logits: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        device = logits.device
-        # TODO: support more data types in logits to avoid conversion
-        # to float32
-        logits = logits.float()
-        batch_size = indices.size(0) if indices is not None else logits.size(0)
-        samples = torch.empty(batch_size, dtype=torch.int32, device=device)
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        device = logits.place
+        logits = logits.astype(dtype="float32")
+        batch_size = indices.shape[0] if indices is not None else logits.shape[0]
+        samples = paddle.empty(shape=batch_size, dtype="int32")
         module.sampling_from_logits.default(
-            logits,
-            samples,
-            indices,
-            deterministic,
-            generator,
+            logits, samples, indices, deterministic, generator
         )
         return samples
 
     @register_fake_op("flashinfer::sampling_from_logits")
     def _fake_sampling_from_logits(
-        logits: torch.Tensor,
-        indices: Optional[torch.Tensor],
+        logits: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        batch_size = indices.size(0) if indices is not None else logits.size(0)
-        return torch.empty(batch_size, dtype=torch.int32, device=logits.device)
-
-    # torch library for sampling_from_probs
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        batch_size = indices.shape[0] if indices is not None else logits.shape[0]
+        return paddle.empty(shape=batch_size, dtype="int32")
 
     @register_custom_op("flashinfer::sampling_from_probs", mutates_args=())
     def sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        device = probs.device
-        probs = probs.float()
-        batch_size = indices.size(0) if indices is not None else probs.size(0)
-        samples = torch.empty(batch_size, dtype=torch.int32, device=device)
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        device = probs.place
+        probs = probs.astype(dtype="float32")
+        batch_size = indices.shape[0] if indices is not None else probs.shape[0]
+        samples = paddle.empty(shape=batch_size, dtype="int32")
         module.sampling_from_probs.default(
-            probs,
-            samples,
-            indices,
-            deterministic,
-            generator,
+            probs, samples, indices, deterministic, generator
         )
         return samples
 
-    # torch library for sampling_from_probs
-
     @register_fake_op("flashinfer::sampling_from_probs")
     def _fake_sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        batch_size = indices.size(0) if indices is not None else probs.size(0)
-        return torch.empty(batch_size, dtype=torch.int32, device=probs.device)
-
-    # torch library for top_p_sampling_from_probs
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        batch_size = indices.shape[0] if indices is not None else probs.shape[0]
+        return paddle.empty(shape=batch_size, dtype="int32")
 
     @register_custom_op("flashinfer::top_p_sampling_from_probs", mutates_args=())
     def top_p_sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
-        maybe_top_p_arr: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
+        maybe_top_p_arr: Optional[paddle.Tensor],
         top_p_val: float,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        device = probs.device
-        probs = probs.float()
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        device = probs.place
+        probs = probs.astype(dtype="float32")
         maybe_top_p_arr = (
-            maybe_top_p_arr.float() if maybe_top_p_arr is not None else None
+            maybe_top_p_arr.astype(dtype="float32")
+            if maybe_top_p_arr is not None
+            else None
         )
-        batch_size = indices.size(0) if indices is not None else probs.size(0)
-        samples = torch.empty(batch_size, dtype=torch.int32, device=device)
+        batch_size = indices.shape[0] if indices is not None else probs.shape[0]
+        samples = paddle.empty(shape=batch_size, dtype="int32")
         module.top_p_sampling_from_probs.default(
             probs,
             samples,
@@ -177,32 +159,34 @@ def get_sampling_module():
 
     @register_fake_op("flashinfer::top_p_sampling_from_probs")
     def _fake_top_p_sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
-        maybe_top_p_arr: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
+        maybe_top_p_arr: Optional[paddle.Tensor],
         top_p_val: float,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        sample = torch.empty(probs.size(0), dtype=torch.int32, device=probs.device)
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        sample = paddle.empty(shape=probs.shape[0], dtype="int32")
         return sample
-
-    # torch library for top_k_sampling_from_probs
 
     @register_custom_op("flashinfer::top_k_sampling_from_probs", mutates_args=())
     def top_k_sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
-        maybe_top_k_arr: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
+        maybe_top_k_arr: Optional[paddle.Tensor],
         top_k_val: int,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        device = probs.device
-        probs = probs.float()
-        batch_size = indices.size(0) if indices is not None else probs.size(0)
-        maybe_top_k_arr = maybe_top_k_arr.int() if maybe_top_k_arr is not None else None
-        samples = torch.empty(batch_size, dtype=torch.int32, device=device)
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        device = probs.place
+        probs = probs.astype(dtype="float32")
+        batch_size = indices.shape[0] if indices is not None else probs.shape[0]
+        maybe_top_k_arr = (
+            maybe_top_k_arr.astype(dtype="int32")
+            if maybe_top_k_arr is not None
+            else None
+        )
+        samples = paddle.empty(shape=batch_size, dtype="int32")
         module.top_k_sampling_from_probs.default(
             probs,
             samples,
@@ -216,35 +200,35 @@ def get_sampling_module():
 
     @register_fake_op("flashinfer::top_k_sampling_from_probs")
     def _fake_top_k_sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
-        maybe_top_k_arr: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
+        maybe_top_k_arr: Optional[paddle.Tensor],
         top_k_val: int,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        batch_size = indices.size(0) if indices is not None else probs.size(0)
-        sample = torch.empty(batch_size, dtype=torch.int32, device=probs.device)
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        batch_size = indices.shape[0] if indices is not None else probs.shape[0]
+        sample = paddle.empty(shape=batch_size, dtype="int32")
         return sample
-
-    # torch library for min_p_sampling_from_probs
 
     @register_custom_op("flashinfer::min_p_sampling_from_probs", mutates_args=())
     def min_p_sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
-        maybe_min_p_arr: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
+        maybe_min_p_arr: Optional[paddle.Tensor],
         min_p_val: float,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        device = probs.device
-        probs = probs.float()
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        device = probs.place
+        probs = probs.astype(dtype="float32")
         maybe_min_p_arr = (
-            maybe_min_p_arr.float() if maybe_min_p_arr is not None else None
+            maybe_min_p_arr.astype(dtype="float32")
+            if maybe_min_p_arr is not None
+            else None
         )
-        batch_size = indices.size(0) if indices is not None else probs.size(0)
-        samples = torch.empty(batch_size, dtype=torch.int32, device=device)
+        batch_size = indices.shape[0] if indices is not None else probs.shape[0]
+        samples = paddle.empty(shape=batch_size, dtype="int32")
         module.min_p_sampling_from_probs.default(
             probs,
             samples,
@@ -256,27 +240,31 @@ def get_sampling_module():
         )
         return samples
 
-    # torch library for top_k_top_p_sampling_from_probs
-
     @register_custom_op("flashinfer::top_k_top_p_sampling_from_probs", mutates_args=())
     def top_k_top_p_sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
-        maybe_top_k_arr: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
+        maybe_top_k_arr: Optional[paddle.Tensor],
         top_k_val: int,
-        maybe_top_p_arr: Optional[torch.Tensor],
+        maybe_top_p_arr: Optional[paddle.Tensor],
         top_p_val: float,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        device = probs.device
-        probs = probs.float()
-        maybe_top_k_arr = maybe_top_k_arr.int() if maybe_top_k_arr is not None else None
-        maybe_top_p_arr = (
-            maybe_top_p_arr.float() if maybe_top_p_arr is not None else None
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        device = probs.place
+        probs = probs.astype(dtype="float32")
+        maybe_top_k_arr = (
+            maybe_top_k_arr.astype(dtype="int32")
+            if maybe_top_k_arr is not None
+            else None
         )
-        batch_size = indices.size(0) if indices is not None else probs.size(0)
-        samples = torch.empty(batch_size, dtype=torch.int32, device=device)
+        maybe_top_p_arr = (
+            maybe_top_p_arr.astype(dtype="float32")
+            if maybe_top_p_arr is not None
+            else None
+        )
+        batch_size = indices.shape[0] if indices is not None else probs.shape[0]
+        samples = paddle.empty(shape=batch_size, dtype="int32")
         module.top_k_top_p_sampling_from_probs.default(
             probs,
             samples,
@@ -292,128 +280,108 @@ def get_sampling_module():
 
     @register_fake_op("flashinfer::top_k_top_p_sampling_from_probs")
     def _fake_top_k_top_p_sampling_from_probs(
-        probs: torch.Tensor,
-        indices: Optional[torch.Tensor],
-        maybe_top_k_arr: Optional[torch.Tensor],
+        probs: paddle.Tensor,
+        indices: Optional[paddle.Tensor],
+        maybe_top_k_arr: Optional[paddle.Tensor],
         top_k_val: int,
-        maybe_top_p_arr: Optional[torch.Tensor],
+        maybe_top_p_arr: Optional[paddle.Tensor],
         top_p_val: float,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        batch_size = indices.size(0) if indices is not None else probs.size(0)
-        sample = torch.empty(batch_size, dtype=torch.int32, device=probs.device)
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        batch_size = indices.shape[0] if indices is not None else probs.shape[0]
+        sample = paddle.empty(shape=batch_size, dtype="int32")
         return sample
-
-    # torch library for top_p_renorm_probs
 
     @register_custom_op("flashinfer::top_p_renorm_probs", mutates_args=())
     def top_p_renorm_probs(
-        probs: torch.Tensor,
-        maybe_top_p_arr: Optional[torch.Tensor],
-        top_p_val: float,
-    ) -> torch.Tensor:
-        probs = probs.float()
+        probs: paddle.Tensor, maybe_top_p_arr: Optional[paddle.Tensor], top_p_val: float
+    ) -> paddle.Tensor:
+        probs = probs.astype(dtype="float32")
         maybe_top_p_arr = (
-            maybe_top_p_arr.float() if maybe_top_p_arr is not None else None
+            maybe_top_p_arr.astype(dtype="float32")
+            if maybe_top_p_arr is not None
+            else None
         )
-        renorm_probs = torch.empty_like(probs)
+        renorm_probs = paddle.empty_like(x=probs)
         module.top_p_renorm_probs.default(
-            probs,
-            renorm_probs,
-            maybe_top_p_arr,
-            top_p_val,
+            probs, renorm_probs, maybe_top_p_arr, top_p_val
         )
         return renorm_probs
 
     @register_fake_op("flashinfer::top_p_renorm_probs")
     def _fake_top_p_renorm_probs(
-        probs: torch.Tensor,
-        maybe_top_p_arr: Optional[torch.Tensor],
-        top_p_val: float,
-    ) -> torch.Tensor:
-        return torch.empty_like(probs)
-
-    # torch library for top_k_renorm_probs
+        probs: paddle.Tensor, maybe_top_p_arr: Optional[paddle.Tensor], top_p_val: float
+    ) -> paddle.Tensor:
+        return paddle.empty_like(x=probs)
 
     @register_custom_op("flashinfer::top_k_renorm_probs", mutates_args=())
     def top_k_renorm_probs(
-        probs: torch.Tensor,
-        maybe_top_k_arr: Optional[torch.Tensor],
-        top_k_val: int,
-    ) -> torch.Tensor:
-        probs = probs.float()
-        maybe_top_k_arr = maybe_top_k_arr.int() if maybe_top_k_arr is not None else None
-        renorm_probs = torch.empty_like(probs)
+        probs: paddle.Tensor, maybe_top_k_arr: Optional[paddle.Tensor], top_k_val: int
+    ) -> paddle.Tensor:
+        probs = probs.astype(dtype="float32")
+        maybe_top_k_arr = (
+            maybe_top_k_arr.astype(dtype="int32")
+            if maybe_top_k_arr is not None
+            else None
+        )
+        renorm_probs = paddle.empty_like(x=probs)
         module.top_k_renorm_probs.default(
-            probs,
-            renorm_probs,
-            maybe_top_k_arr,
-            top_k_val,
+            probs, renorm_probs, maybe_top_k_arr, top_k_val
         )
         return renorm_probs
 
     @register_fake_op("flashinfer::top_k_renorm_probs")
     def _fake_top_k_renorm_probs(
-        probs: torch.Tensor,
-        maybe_top_k_arr: Optional[torch.Tensor],
-        top_k_val: int,
-    ) -> torch.Tensor:
-        return torch.empty_like(probs)
-
-    # torch library for top_k_mask_logits
+        probs: paddle.Tensor, maybe_top_k_arr: Optional[paddle.Tensor], top_k_val: int
+    ) -> paddle.Tensor:
+        return paddle.empty_like(x=probs)
 
     @register_custom_op("flashinfer::top_k_mask_logits", mutates_args=())
     def top_k_mask_logits(
-        logits: torch.Tensor,
-        maybe_top_k_arr: Optional[torch.Tensor],
-        top_k_val: int,
-    ) -> torch.Tensor:
-        logits = logits.float()
-        maybe_top_k_arr = maybe_top_k_arr.int() if maybe_top_k_arr is not None else None
-        mask_logits = torch.empty_like(logits)
+        logits: paddle.Tensor, maybe_top_k_arr: Optional[paddle.Tensor], top_k_val: int
+    ) -> paddle.Tensor:
+        logits = logits.astype(dtype="float32")
+        maybe_top_k_arr = (
+            maybe_top_k_arr.astype(dtype="int32")
+            if maybe_top_k_arr is not None
+            else None
+        )
+        mask_logits = paddle.empty_like(x=logits)
         module.top_k_mask_logits.default(
-            logits,
-            mask_logits,
-            maybe_top_k_arr,
-            top_k_val,
+            logits, mask_logits, maybe_top_k_arr, top_k_val
         )
         return mask_logits
 
     @register_fake_op("flashinfer::top_k_mask_logits")
     def _fake_top_k_mask_logits(
-        logits: torch.Tensor,
-        maybe_top_k_arr: Optional[torch.Tensor],
-        top_k_val: int,
-    ) -> torch.Tensor:
-        return torch.empty_like(logits)
-
-    # torch library for chain_speculative_sampling
+        logits: paddle.Tensor, maybe_top_k_arr: Optional[paddle.Tensor], top_k_val: int
+    ) -> paddle.Tensor:
+        return paddle.empty_like(x=logits)
 
     @register_custom_op(
         "flashinfer::chain_speculative_sampling",
-        mutates_args=(
-            "output_accepted_token_num",
-            "output_emitted_draft_token_num",
-        ),
+        mutates_args=("output_accepted_token_num", "output_emitted_draft_token_num"),
     )
     def chain_speculative_sampling(
-        draft_probs: torch.Tensor,
-        draft_token_ids: torch.Tensor,
-        target_probs: torch.Tensor,
-        output_accepted_token_num: torch.Tensor,
-        output_emitted_draft_token_num: torch.Tensor,
+        draft_probs: paddle.Tensor,
+        draft_token_ids: paddle.Tensor,
+        target_probs: paddle.Tensor,
+        output_accepted_token_num: paddle.Tensor,
+        output_emitted_draft_token_num: paddle.Tensor,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        device = draft_probs.device
-        draft_probs = draft_probs.float()
-        draft_token_ids = draft_token_ids.int()
-        target_probs = target_probs.float()
-        output_accepted_token_num = output_accepted_token_num.int()
-        output_emitted_draft_token_num = output_emitted_draft_token_num.int()
-        b, n = draft_token_ids.shape
-        output_token_ids = torch.empty((b, n + 1), dtype=torch.int32, device=device)
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        device = draft_probs.place
+        draft_probs = draft_probs.astype(dtype="float32")
+        draft_token_ids = draft_token_ids.astype(dtype="int32")
+        target_probs = target_probs.astype(dtype="float32")
+        output_accepted_token_num = output_accepted_token_num.astype(dtype="int32")
+        output_emitted_draft_token_num = output_emitted_draft_token_num.astype(
+            dtype="int32"
+        )
+        b, n = tuple(draft_token_ids.shape)
+        output_token_ids = paddle.empty(shape=(b, n + 1), dtype="int32")
         module.chain_speculative_sampling.default(
             draft_probs,
             draft_token_ids,
@@ -428,19 +396,18 @@ def get_sampling_module():
 
     @register_fake_op("flashinfer::chain_speculative_sampling")
     def _fake_chain_speculative_sampling(
-        draft_probs: torch.Tensor,
-        draft_token_ids: torch.Tensor,
-        target_probs: torch.Tensor,
-        output_accepted_token_num: torch.Tensor,
-        output_emitted_draft_token_num: torch.Tensor,
+        draft_probs: paddle.Tensor,
+        draft_token_ids: paddle.Tensor,
+        target_probs: paddle.Tensor,
+        output_accepted_token_num: paddle.Tensor,
+        output_emitted_draft_token_num: paddle.Tensor,
         deterministic: bool,
-        generator: Optional[torch.Generator],
-    ) -> torch.Tensor:
-        b, n = draft_token_ids.shape
-        device = draft_token_ids.device
-        return torch.empty((b, n + 1), dtype=torch.int32, device=device)
+>>>>>>        generator: Optional[torch.Generator],
+    ) -> paddle.Tensor:
+        b, n = tuple(draft_token_ids.shape)
+        device = draft_token_ids.place
+        return paddle.empty(shape=(b, n + 1), dtype="int32")
 
-    # Register the module
     return SimpleNamespace(
         softmax=softmax,
         sampling_from_probs=sampling_from_probs,
@@ -457,18 +424,18 @@ def get_sampling_module():
 
 
 def _to_tensor_scalar_tuple(x):
-    if isinstance(x, torch.Tensor):
-        return (x, 0)
+    if isinstance(x, paddle.Tensor):
+        return x, 0
     else:
-        return (None, x)
+        return None, x
 
 
 def softmax(
-    logits: torch.Tensor,
-    temperature: Optional[Union[torch.Tensor, float]] = None,
+    logits: paddle.Tensor,
+    temperature: Optional[Union[paddle.Tensor, float]] = None,
     enable_pdl: Optional[bool] = None,
-) -> torch.Tensor:
-    r"""Fused GPU kernel for `online safe softmax <https://arxiv.org/abs/1805.02867>`_ with temperature scaling.
+) -> paddle.Tensor:
+    """Fused GPU kernel for `online safe softmax <https://arxiv.org/abs/1805.02867>`_ with temperature scaling.
 
 
     Parameters
@@ -507,27 +474,25 @@ def softmax(
             [0.2401, 0.1707, 0.2249, 0.1664, 0.1979],
             [0.1724, 0.2719, 0.1991, 0.1465, 0.2101]], device='cuda:0')
     """
-    workspace_buffer = _get_cache_buf("softmax_workspace", 1024 * 1024, logits.device)
+    workspace_buffer = _get_cache_buf("softmax_workspace", 1024 * 1024, logits.place)
     if temperature is None:
         temperature = 1.0
-
-    # Auto-detect PDL support if not specified
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(logits.device)
-
-    return get_sampling_module().softmax(
+        enable_pdl = device_support_pdl(logits.place)
+    """Not Support auto convert *.softmax, please judge whether it is Pytorch API and convert by yourself"""
+>>>>>>    return get_sampling_module().softmax(
         workspace_buffer, logits, *_to_tensor_scalar_tuple(temperature), enable_pdl
     )
 
 
 def sampling_from_logits(
-    logits: torch.Tensor,
-    indices: Optional[torch.Tensor] = None,
+    logits: paddle.Tensor,
+    indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
-    generator: Optional[torch.Generator] = None,
+>>>>>>    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
-) -> torch.Tensor:
-    r"""Fused GPU kernel for category sampling from logits. It's equivalent to sampling
+) -> paddle.Tensor:
+    """Fused GPU kernel for category sampling from logits. It's equivalent to sampling
     from :attr:`logits` after applying softmax.
     Parameters
     ----------
@@ -571,7 +536,7 @@ def sampling_from_logits(
     tensor([0, 1, 1, 1], device='cuda:0', dtype=torch.int32)
     """
     if check_nan:
-        if torch.any(torch.isnan(logits)):
+        if paddle.any(x=paddle.isnan(x=logits)):
             raise ValueError("Input logits contains NaN.")
     return get_sampling_module().sampling_from_logits(
         logits, indices, deterministic, generator
@@ -579,13 +544,13 @@ def sampling_from_logits(
 
 
 def sampling_from_probs(
-    probs: torch.Tensor,
-    indices: Optional[torch.Tensor] = None,
+    probs: paddle.Tensor,
+    indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
-    generator: Optional[torch.Generator] = None,
+>>>>>>    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
-) -> torch.Tensor:
-    r"""Fused GPU kernel for category sampling from probabilities.
+) -> paddle.Tensor:
+    """Fused GPU kernel for category sampling from probabilities.
 
     Parameters
     ----------
@@ -635,7 +600,7 @@ def sampling_from_probs(
     This function expects float32 inputs, and the output is int32.
     """
     if check_nan:
-        if torch.any(torch.isnan(probs)):
+        if paddle.any(x=paddle.isnan(x=probs)):
             raise ValueError("Input probs contains NaN.")
     return get_sampling_module().sampling_from_probs(
         probs, indices, deterministic, generator
@@ -643,14 +608,14 @@ def sampling_from_probs(
 
 
 def top_p_sampling_from_probs(
-    probs: torch.Tensor,
-    top_p: Union[torch.Tensor, float],
-    indices: Optional[torch.Tensor] = None,
+    probs: paddle.Tensor,
+    top_p: Union[paddle.Tensor, float],
+    indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
-    generator: Optional[torch.Generator] = None,
+>>>>>>    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
-) -> torch.Tensor:
-    r"""Fused GPU kernel for top-p sampling (nucleus sampling) from probabilities,
+) -> paddle.Tensor:
+    """Fused GPU kernel for top-p sampling (nucleus sampling) from probabilities,
     this operator implements GPU-based rejection sampling without explicit sorting.
     Check the `blog post <https://flashinfer.ai/2025/03/10/sampling.html>`_ for more details.
 
@@ -717,7 +682,7 @@ def top_p_sampling_from_probs(
     top_p_renorm_probs
     """
     if check_nan:
-        if torch.any(torch.isnan(probs)):
+        if paddle.any(x=paddle.isnan(x=probs)):
             raise ValueError("Input probs contains NaN.")
     return get_sampling_module().top_p_sampling_from_probs(
         probs, indices, *_to_tensor_scalar_tuple(top_p), deterministic, generator
@@ -725,14 +690,14 @@ def top_p_sampling_from_probs(
 
 
 def top_k_sampling_from_probs(
-    probs: torch.Tensor,
-    top_k: Union[torch.Tensor, int],
-    indices: Optional[torch.Tensor] = None,
+    probs: paddle.Tensor,
+    top_k: Union[paddle.Tensor, int],
+    indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
-    generator: Optional[torch.Generator] = None,
+>>>>>>    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
-) -> torch.Tensor:
-    r"""Fused GPU kernel for top-k sampling from probabilities,
+) -> paddle.Tensor:
+    """Fused GPU kernel for top-k sampling from probabilities,
     this operator implements GPU-based rejection sampling without explicit sorting.
     Check the `blog post <https://flashinfer.ai/2025/03/10/sampling.html>`_ for more details.
 
@@ -799,7 +764,7 @@ def top_k_sampling_from_probs(
     top_k_renorm_probs
     """
     if check_nan:
-        if torch.any(torch.isnan(probs)):
+        if paddle.any(x=paddle.isnan(x=probs)):
             raise ValueError("Input probs contains NaN.")
     return get_sampling_module().top_k_sampling_from_probs(
         probs, indices, *_to_tensor_scalar_tuple(top_k), deterministic, generator
@@ -807,14 +772,14 @@ def top_k_sampling_from_probs(
 
 
 def min_p_sampling_from_probs(
-    probs: torch.Tensor,
-    min_p: Union[torch.Tensor, float],
-    indices: Optional[torch.Tensor] = None,
+    probs: paddle.Tensor,
+    min_p: Union[paddle.Tensor, float],
+    indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
-    generator: Optional[torch.Generator] = None,
+>>>>>>    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
-) -> torch.Tensor:
-    r"""Fused GPU kernel for `min_p sampling <https://arxiv.org/abs/2407.01082>`_ from probabilities,
+) -> paddle.Tensor:
+    """Fused GPU kernel for `min_p sampling <https://arxiv.org/abs/2407.01082>`_ from probabilities,
 
     this operator implements GPU-based rejection sampling without explicit sorting.
     Check the `blog post <https://flashinfer.ai/2025/03/10/sampling.html>`_ for more details.
@@ -875,9 +840,8 @@ def min_p_sampling_from_probs(
     ----
     This function expects float32 inputs, and the output is int32.
     """
-
     if check_nan:
-        if torch.any(torch.isnan(probs)):
+        if paddle.any(x=paddle.isnan(x=probs)):
             raise ValueError("Input probs contains NaN.")
     return get_sampling_module().min_p_sampling_from_probs(
         probs, indices, *_to_tensor_scalar_tuple(min_p), deterministic, generator
@@ -885,16 +849,16 @@ def min_p_sampling_from_probs(
 
 
 def top_k_top_p_sampling_from_logits(
-    logits: torch.Tensor,
-    top_k: Union[torch.Tensor, int],
-    top_p: Union[torch.Tensor, float],
-    indices: Optional[torch.Tensor] = None,
+    logits: paddle.Tensor,
+    top_k: Union[paddle.Tensor, int],
+    top_p: Union[paddle.Tensor, float],
+    indices: Optional[paddle.Tensor] = None,
     filter_apply_order: str = "top_k_first",
     deterministic: bool = True,
-    generator: Optional[torch.Generator] = None,
+>>>>>>    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
-) -> torch.Tensor:
-    r"""Fused GPU kernel for top-k and top-p sampling from pre-softmax logits,
+) -> paddle.Tensor:
+    """Fused GPU kernel for top-k and top-p sampling from pre-softmax logits,
 
     this operator implements GPU-based rejection sampling without explicit sorting.
     Check the `blog post <https://flashinfer.ai/2025/03/10/sampling.html>`_ for more details.
@@ -978,7 +942,7 @@ def top_k_top_p_sampling_from_logits(
     """
     if filter_apply_order == "top_k_first":
         masked_logits = top_k_mask_logits(logits, top_k)
-        probs = torch.softmax(masked_logits, dim=-1)
+        probs = paddle.nn.functional.softmax(x=masked_logits, axis=-1)
         return top_p_sampling_from_probs(
             probs,
             top_p,
@@ -988,9 +952,9 @@ def top_k_top_p_sampling_from_logits(
             generator=generator,
         )
     elif filter_apply_order == "joint":
-        probs = torch.softmax(logits, dim=-1)
+        probs = paddle.nn.functional.softmax(x=logits, axis=-1)
         if check_nan:
-            if torch.any(torch.isnan(probs)):
+            if paddle.any(x=paddle.isnan(x=probs)):
                 raise ValueError("Input probs contains NaN.")
         return get_sampling_module().top_k_top_p_sampling_from_probs(
             probs,
@@ -1005,16 +969,16 @@ def top_k_top_p_sampling_from_logits(
 
 
 def top_k_top_p_sampling_from_probs(
-    probs: torch.Tensor,
-    top_k: Union[torch.Tensor, int],
-    top_p: Union[torch.Tensor, float],
-    indices: Optional[torch.Tensor] = None,
+    probs: paddle.Tensor,
+    top_k: Union[paddle.Tensor, int],
+    top_p: Union[paddle.Tensor, float],
+    indices: Optional[paddle.Tensor] = None,
     filter_apply_order: str = "top_k_first",
     deterministic: bool = True,
-    generator: Optional[torch.Generator] = None,
+>>>>>>    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
-) -> torch.Tensor:
-    r"""Fused GPU kernel for top-k and top-p sampling from probabilities,
+) -> paddle.Tensor:
+    """Fused GPU kernel for top-k and top-p sampling from probabilities,
 
     this operator implements GPU-based rejection sampling without explicit sorting.
     Check the `blog post <https://flashinfer.ai/2025/03/10/sampling.html>`_ for more details.
@@ -1103,7 +1067,7 @@ def top_k_top_p_sampling_from_probs(
         )
     elif filter_apply_order == "joint":
         if check_nan:
-            if torch.any(torch.isnan(probs)):
+            if paddle.any(x=paddle.isnan(x=probs)):
                 raise ValueError("Input probs contains NaN.")
         return get_sampling_module().top_k_top_p_sampling_from_probs(
             probs,
@@ -1118,10 +1082,9 @@ def top_k_top_p_sampling_from_probs(
 
 
 def top_p_renorm_probs(
-    probs: torch.Tensor,
-    top_p: Union[torch.Tensor, float],
-) -> torch.Tensor:
-    r"""Fused GPU kernel for renormalizing probabilities by top-p thresholding.
+    probs: paddle.Tensor, top_p: Union[paddle.Tensor, float]
+) -> paddle.Tensor:
+    """Fused GPU kernel for renormalizing probabilities by top-p thresholding.
 
     Parameters
     ----------
@@ -1183,10 +1146,9 @@ top_p_renorm_prob = top_p_renorm_probs
 
 
 def top_k_renorm_probs(
-    probs: torch.Tensor,
-    top_k: Union[torch.Tensor, int],
-) -> torch.Tensor:
-    r"""Fused GPU kernel for renormalizing probabilities by top-k thresholding.
+    probs: paddle.Tensor, top_k: Union[paddle.Tensor, int]
+) -> paddle.Tensor:
+    """Fused GPU kernel for renormalizing probabilities by top-k thresholding.
 
     Parameters
     ----------
@@ -1247,9 +1209,9 @@ top_k_renorm_prob = top_k_renorm_probs
 
 
 def top_k_mask_logits(
-    logits: torch.Tensor, top_k: Union[torch.Tensor, int]
-) -> torch.Tensor:
-    r"""Fused GPU kernel for masking logits by top-k thresholding.
+    logits: paddle.Tensor, top_k: Union[paddle.Tensor, int]
+) -> paddle.Tensor:
+    """Fused GPU kernel for masking logits by top-k thresholding.
 
     Parameters
     ----------
@@ -1306,12 +1268,12 @@ def chain_speculative_sampling(
     draft_probs,
     draft_token_ids,
     target_probs,
-    maybe_output_accepted_token_num: Optional[torch.Tensor] = None,
-    maybe_output_emitted_draft_token_num: Optional[torch.Tensor] = None,
+    maybe_output_accepted_token_num: Optional[paddle.Tensor] = None,
+    maybe_output_emitted_draft_token_num: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
-    generator: Optional[torch.Generator] = None,
-) -> torch.Tensor:
-    r"""Fused-GPU kernel for speculative sampling for sequence generation (proposed in
+>>>>>>    generator: Optional[torch.Generator] = None,
+) -> paddle.Tensor:
+    """Fused-GPU kernel for speculative sampling for sequence generation (proposed in
     paper `Accelerating Large Language Model Decoding with Speculative Sampling <https://arxiv.org/pdf/2302.01318>`_),
     where the draft model generates a sequence(chain) of tokens for each request.
 
@@ -1381,7 +1343,7 @@ def chain_speculative_sampling(
     >>> # token 1 was sampled from draft model for the second token
     >>> draft_token_ids = torch.tensor([[2, 1]], dtype=torch.int32).to(0)
     >>> target_probs = torch.tensor([[[0.0, 0.1, 0.6, 0.3], [1.0, 0.0, 0.0, 0.0], [0.7, 0.1, 0.1, 0.1]]]).to(0)
-    >>> output_token_ids, output_accepted_token_num, output_emitted_draft_token_num =\
+    >>> output_token_ids, output_accepted_token_num, output_emitted_draft_token_num =\\
     ...     flashinfer.sampling.chain_speculative_sampling(
     ...         draft_probs, draft_token_ids, target_probs)
     >>> # the first token is accepted, the second token is rejected and sampled from the difference
@@ -1393,14 +1355,14 @@ def chain_speculative_sampling(
     >>> output_emitted_draft_token_num
     tensor([1], device='cuda:0')
     """
-    b = draft_probs.size(0)
-    dev = draft_probs.device
+    b = draft_probs.shape[0]
+    dev = draft_probs.place
     if maybe_output_accepted_token_num is None:
-        output_accepted_token_num = torch.zeros(b, dtype=torch.int32, device=dev)
+        output_accepted_token_num = paddle.zeros(shape=b, dtype="int32")
     else:
         output_accepted_token_num = maybe_output_accepted_token_num
     if maybe_output_emitted_draft_token_num is None:
-        output_emitted_draft_token_num = torch.zeros(b, dtype=torch.int32, device=dev)
+        output_emitted_draft_token_num = paddle.zeros(shape=b, dtype="int32")
     else:
         output_emitted_draft_token_num = maybe_output_emitted_draft_token_num
     output_token_ids = get_sampling_module().chain_speculative_sampling(
@@ -1412,4 +1374,4 @@ def chain_speculative_sampling(
         deterministic,
         generator,
     )
-    return output_token_ids, output_accepted_token_num, output_emitted_draft_token_num
+    return (output_token_ids, output_accepted_token_num, output_emitted_draft_token_num)

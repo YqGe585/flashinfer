@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from .compiler import CompileError as CompileError
 from .compiler import Compiler as Compiler
 from .compiler import compile_pipeline as compile_pipeline

@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,9 +15,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-import torch
-
 import flashinfer
 from flashinfer.utils import PosEncodingMode
 
@@ -29,28 +28,28 @@ def test_warmpup_llama():
             flashinfer.quantization.gen_quantization_module(),
             flashinfer.page.gen_page_module(),
             flashinfer.decode.gen_batch_decode_module(
-                torch.float16,
-                torch.float16,
-                torch.float16,
-                torch.int32,
-                128,  # head_dim_qk
-                128,  # head_dim_vo
+                "float16",
+                "float16",
+                "float16",
+                "int32",
+                128,
+                128,
                 PosEncodingMode.NONE.value,
-                False,  # use_sliding_window
-                False,  # use_logits_soft_cap
+                False,
+                False,
             ),
             flashinfer.prefill.gen_batch_prefill_module(
-                "fa2",  # backend
-                torch.float16,
-                torch.float16,
-                torch.float16,
-                torch.int32,
-                128,  # head_dim_qk
-                128,  # head_dim_vo
+                "fa2",
+                "float16",
+                "float16",
+                "float16",
+                "int32",
+                128,
+                128,
                 PosEncodingMode.NONE.value,
-                False,  # use_sliding_window
-                False,  # use_logits_soft_cap
-                False,  # use_fp16_qk_reduction
+                False,
+                False,
+                False,
             ),
         ],
         verbose=False,
@@ -66,41 +65,41 @@ def test_warmpup_llama_sm90():
             flashinfer.quantization.gen_quantization_module(),
             flashinfer.page.gen_page_module(),
             flashinfer.decode.gen_batch_decode_module(
-                torch.float16,
-                torch.float16,
-                torch.float16,
-                torch.int32,
-                128,  # head_dim_qk
-                128,  # head_dim_vo
+                "float16",
+                "float16",
+                "float16",
+                "int32",
+                128,
+                128,
                 PosEncodingMode.NONE.value,
-                False,  # use_sliding_window
-                False,  # use_logits_soft_cap
+                False,
+                False,
             ),
             flashinfer.prefill.gen_batch_prefill_module(
-                "fa2",  # backend
-                torch.float16,
-                torch.float16,
-                torch.float16,
-                torch.int32,
-                128,  # head_dim_qk
-                128,  # head_dim_vo
+                "fa2",
+                "float16",
+                "float16",
+                "float16",
+                "int32",
+                128,
+                128,
                 PosEncodingMode.NONE.value,
-                False,  # use_sliding_window
-                False,  # use_logits_soft_cap
-                False,  # use_fp16_qk_reduction
+                False,
+                False,
+                False,
             ),
             flashinfer.prefill.gen_batch_prefill_module(
-                "fa3",  # backend
-                torch.float16,
-                torch.float16,
-                torch.float16,
-                torch.int32,
-                128,  # head_dim_qk
-                128,  # head_dim_vo
+                "fa3",
+                "float16",
+                "float16",
+                "float16",
+                "int32",
+                128,
+                128,
                 PosEncodingMode.NONE.value,
-                False,  # use_sliding_window
-                False,  # use_logits_soft_cap
-                False,  # use_fp16_qk_reduction
+                False,
+                False,
+                False,
             ),
         ],
         verbose=False,

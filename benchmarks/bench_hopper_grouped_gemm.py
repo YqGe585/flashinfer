@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,9 +15,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import numpy as np
-import torch
 
 import flashinfer
 from flashinfer.testing.utils import bench_gpu_time
@@ -25,43 +25,38 @@ def bench_grouped_gemm(
     batch_size, num_tokens_per_group, d_in, d_out, dtype, output_dtype
 ):
     np.random.seed(42)
-    W = torch.randn(batch_size, d_out, d_in, device="cuda:0").to(dtype)
-    X = torch.randn(batch_size * num_tokens_per_group, d_in, device="cuda:0").to(dtype)
-    Y = torch.empty(
-        batch_size * num_tokens_per_group, d_out, dtype=output_dtype, device="cuda:0"
+    W = paddle.randn(shape=[batch_size, d_out, d_in]).to(dtype)
+    X = paddle.randn(shape=[batch_size * num_tokens_per_group, d_in]).to(dtype)
+    Y = paddle.empty(
+        shape=[batch_size * num_tokens_per_group, d_out], dtype=output_dtype
     )
-
-    workspace_buffer = torch.empty(32 * 1024 * 1024, dtype=torch.int8, device="cuda:0")
+    workspace_buffer = paddle.empty(shape=32 * 1024 * 1024, dtype="int8")
     segment_gemm = flashinfer.gemm.SegmentGEMMWrapper(workspace_buffer, backend="auto")
-    seg_indptr = torch.arange(
-        0,
-        (batch_size + 1) * num_tokens_per_group,
-        num_tokens_per_group,
-        dtype=torch.int64,
-        device="cuda:0",
+    seg_indptr = paddle.arange(
+        start=0,
+        end=(batch_size + 1) * num_tokens_per_group,
+        step=num_tokens_per_group,
+        dtype="int64",
     )
-
     measurements = bench_gpu_time(
         lambda: segment_gemm.run(X, W, batch_size, True, out=Y, seg_indptr=seg_indptr)
     )
     ms = np.median(measurements)
     flops = 2 * batch_size * num_tokens_per_group * d_in * d_out
-
     print(
         f"Config: batch_size={batch_size}, num_tokens_per_group={num_tokens_per_group}, d_in={d_in}, d_out={d_out}, dtype={dtype}, output_dtype={output_dtype}"
     )
-    print(f"FLOPs: {flops / ms * 1e-9:.2f} TFLOPs/s")
+    print(f"FLOPs: {flops / ms * 1e-09:.2f} TFLOPs/s")
 
 
 if __name__ == "__main__":
-    device_capability = torch.cuda.get_device_capability()
+    device_capability = paddle.device.cuda.get_device_capability()
     if device_capability[0] != 9:
         print(f"Current device capability: {device_capability}.")
         print("Current benchmark targets capability (9, 0). Returning...")
         exit()
-
-    for dtype_in in [torch.float8_e4m3fn, torch.bfloat16]:
-        for dtype_out in [torch.bfloat16]:
+>>>>>>    for dtype_in in [torch.float8_e4m3fn, "bfloat16"]:
+        for dtype_out in ["bfloat16"]:
             for batch_size in [1, 3, 8, 16]:
                 for num_tokens_per_group in [32, 64, 128, 256, 512]:
                     for d_in in [4096, 8192]:

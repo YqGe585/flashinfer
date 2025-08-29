@@ -1,3 +1,12 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import os
+
+import einops
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,52 +22,54 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import math
 import random
-import time
-from typing import Tuple, Any
-
-import os
 import sys
+import time
+from typing import Any, Tuple
 
 import numpy as np
-import torch
-from einops import rearrange, reduce, repeat
 
 from flashinfer.utils import round_up
 
 
-def _ceil_to_ue8m0(x: torch.Tensor):
+def _ceil_to_ue8m0(x: paddle.Tensor):
     """imported from DeepGEMM"""
     assert x.view(-1).amax().item() > 0
-    return torch.pow(2.0, torch.ceil(torch.log2(x.abs())))
+    return paddle.pow(x=2.0, y=paddle.ceil(x=paddle.log2(x=x.abs())))
 
 
-def per_token_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def per_token_cast_to_fp8(x: paddle.Tensor) -> Tuple[paddle.Tensor, paddle.Tensor]:
     """imported from DeepGEMM"""
-    assert x.dim() == 2 and x.size(1) % 128 == 0
-    m, n = x.shape
+    assert x.dim() == 2 and x.shape[1] % 128 == 0
+    m, n = tuple(x.shape)
     x_view = x.view(m, -1, 128)
-    x_amax = x_view.abs().float().amax(dim=2).view(m, -1).clamp(1e-4)
+    x_amax = (
+        x_view.abs().astype(dtype="float32").amax(axis=2).view(m, -1).clip(min=0.0001)
+    )
     sf = _ceil_to_ue8m0(x_amax / 448.0)
-    return (x_view * (1.0 / sf.unsqueeze(2))).to(torch.float8_e4m3fn).view(m, n), sf
+>>>>>>    return (x_view * (1.0 / sf.unsqueeze(axis=2))).to(torch.float8_e4m3fn).view(
+        m, n
+    ), sf
 
 
-def per_block_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def per_block_cast_to_fp8(x: paddle.Tensor) -> Tuple[paddle.Tensor, paddle.Tensor]:
     """imported from DeepGEMM"""
     assert x.dim() == 2
-    m, n = x.shape
-    x_padded = torch.zeros(
-        (round_up(m, 128), round_up(n, 128)), dtype=x.dtype, device=x.device
-    )
+    m, n = tuple(x.shape)
+    x_padded = paddle.zeros(shape=(round_up(m, 128), round_up(n, 128)), dtype=x.dtype)
     x_padded[:m, :n] = x
-    x_view = x_padded.view(-1, 128, x_padded.size(1) // 128, 128)
-    x_amax = x_view.abs().float().amax(dim=(1, 3), keepdim=True).clamp(1e-4)
+    x_view = x_padded.view(-1, 128, x_padded.shape[1] // 128, 128)
+    x_amax = (
+        x_view.abs()
+        .astype(dtype="float32")
+        .amax(axis=(1, 3), keepdim=True)
+        .clip(min=0.0001)
+    )
     sf = _ceil_to_ue8m0(x_amax / 448.0)
-    x_scaled = (x_view * (1.0 / sf)).to(torch.float8_e4m3fn)
-    return x_scaled.view_as(x_padded)[:m, :n].contiguous(), sf.view(
-        x_view.size(0), x_view.size(2)
+>>>>>>    x_scaled = (x_view * (1.0 / sf)).to(torch.float8_e4m3fn)
+    return x_scaled.view_as(other=x_padded)[:m, :n].contiguous(), sf.view(
+        x_view.shape[0], x_view.shape[2]
     )
 
 
@@ -77,86 +88,69 @@ def quantize_fp8(x, scale_shape, tile_shape, scale_major_mode):
         tuple: A tuple containing the quantized FP8 tensor and the
                calculated float32 scales.
     """
-    # 1. Assertions and Initial Setup
     ndim = x.ndim
     assert ndim in [2, 3], f"x.ndim must be 2 or 3, but got {ndim}"
     assert ndim == len(scale_shape) == len(tile_shape)
-
-    fp8_info = torch.finfo(torch.float8_e4m3fn)
-    fp8_amax = torch.tensor(fp8_info.max, device=x.device, dtype=torch.float32)
-
-    # 2. Tiling and Scale Calculation
+>>>>>>    fp8_info = paddle.finfo(dtype=torch.float8_e4m3fn)
+    fp8_amax = paddle.to_tensor(data=fp8_info.max, dtype="float32", place=x.place)
     if ndim == 2:
         s0, s1 = scale_shape
         t0, t1 = tile_shape
         if scale_major_mode == "K":
-            # Tile x and find the max absolute value in each tile
-            x_tiled = rearrange(x, "(s0 t0) (s1 t1) -> s0 s1 t0 t1", s0=s0, s1=s1)
-            abs_max = reduce(x_tiled.abs(), "s0 s1 t0 t1 -> s0 s1", "max").clamp(1e-4)
-            x_scale = abs_max / fp8_amax
-            x_scale = torch.pow(2.0, torch.ceil(torch.log2(x_scale.abs())))
-
-            # Broadcast scales back to the original tensor shape
-            scales_repeated = repeat(x_scale, "s0 s1 -> (s0 t0) (s1 t1)", t0=t0, t1=t1)
-        else:
-            # Handle column-major tiling
-            x_tiled = rearrange(x, "(s1 t0) (s0 t1) -> s0 s1 t0 t1", s0=s0, s1=s1)
-            abs_max = reduce(x_tiled.abs(), "s0 s1 t0 t1 -> s0 s1", "max").clamp(1e-4)
-            x_scale = abs_max / fp8_amax
-            x_scale = torch.pow(2.0, torch.ceil(torch.log2(x_scale.abs())))
-
-            # Permute scale axes before repeating to match layout
-            scales_permuted = rearrange(x_scale, "s0 s1 -> s1 s0")
-            scales_repeated = repeat(
-                scales_permuted, "s1 s0 -> (s1 t0) (s0 t1)", t0=t0, t1=t1
+            x_tiled = einops.rearrange(
+                x, "(s0 t0) (s1 t1) -> s0 s1 t0 t1", s0=s0, s1=s1
             )
-
+            abs_max = einops.reduce(x_tiled.abs(), "s0 s1 t0 t1 -> s0 s1", "max").clip(
+                min=0.0001
+            )
+            x_scale = abs_max / fp8_amax
+            x_scale = paddle.pow(x=2.0, y=paddle.ceil(x=paddle.log2(x=x_scale.abs())))
+            scales_repeated = einops.tile(
+                repeat_times=[x_scale, "s0 s1 -> (s0 t0) (s1 t1)"]
+            )
+        else:
+            x_tiled = einops.rearrange(
+                x, "(s1 t0) (s0 t1) -> s0 s1 t0 t1", s0=s0, s1=s1
+            )
+            abs_max = einops.reduce(x_tiled.abs(), "s0 s1 t0 t1 -> s0 s1", "max").clip(
+                min=0.0001
+            )
+            x_scale = abs_max / fp8_amax
+            x_scale = paddle.pow(x=2.0, y=paddle.ceil(x=paddle.log2(x=x_scale.abs())))
+            scales_permuted = einops.rearrange(x_scale, "s0 s1 -> s1 s0")
+            scales_repeated = einops.tile(
+                repeat_times=[scales_permuted, "s1 s0 -> (s1 t0) (s0 t1)"]
+            )
     elif ndim == 3:
         s0, s1, s2 = scale_shape
         t0, t1, t2 = tile_shape
         if scale_major_mode == "K":
-            # Tile x and find the max absolute value in each tile
-            x_tiled = rearrange(
+            x_tiled = einops.rearrange(
                 x, "(s0 t0) (s1 t1) (s2 t2) -> s0 s1 s2 t0 t1 t2", s0=s0, s1=s1, s2=s2
             )
-            abs_max = reduce(
+            abs_max = einops.reduce(
                 x_tiled.abs(), "s0 s1 s2 t0 t1 t2 -> s0 s1 s2", "max"
-            ).clamp(1e-4)
+            ).clip(min=0.0001)
             x_scale = abs_max / fp8_amax
-            x_scale = torch.pow(2.0, torch.ceil(torch.log2(x_scale.abs())))
-
-            # Broadcast scales back to the original tensor shape
-            scales_repeated = repeat(
-                x_scale, "s0 s1 s2 -> (s0 t0) (s1 t1) (s2 t2)", t0=t0, t1=t1, t2=t2
+            x_scale = paddle.pow(x=2.0, y=paddle.ceil(x=paddle.log2(x=x_scale.abs())))
+            scales_repeated = einops.tile(
+                repeat_times=[x_scale, "s0 s1 s2 -> (s0 t0) (s1 t1) (s2 t2)"]
             )
         else:
-            # Handle layout where the last two axes are swapped
-            x_tiled = rearrange(
+            x_tiled = einops.rearrange(
                 x, "(s0 t0) (s2 t1) (s1 t2) -> s0 s1 s2 t0 t1 t2", s0=s0, s1=s1, s2=s2
             )
-            abs_max = reduce(
+            abs_max = einops.reduce(
                 x_tiled.abs(), "s0 s1 s2 t0 t1 t2 -> s0 s1 s2", "max"
-            ).clamp(1e-4)
+            ).clip(min=0.0001)
             x_scale = abs_max / fp8_amax
-            x_scale = torch.pow(2.0, torch.ceil(torch.log2(x_scale.abs())))
-
-            # Permute scale axes before repeating to match layout
-            scales_permuted = rearrange(x_scale, "s0 s1 s2 -> s0 s2 s1")
-            scales_repeated = repeat(
-                scales_permuted,
-                "s0 s2 s1 -> (s0 t0) (s2 t1) (s1 t2)",
-                t0=t0,
-                t1=t1,
-                t2=t2,
+            x_scale = paddle.pow(x=2.0, y=paddle.ceil(x=paddle.log2(x=x_scale.abs())))
+            scales_permuted = einops.rearrange(x_scale, "s0 s1 s2 -> s0 s2 s1")
+            scales_repeated = einops.tile(
+                repeat_times=[scales_permuted, "s0 s2 s1 -> (s0 t0) (s2 t1) (s1 t2)"]
             )
-
-    # 3. Final Quantization
-    # Divide the original tensor by the broadcasted scales
-    x_fp32 = x / (scales_repeated + 1e-8)
-
-    # Convert the result to the target FP8 format
-    x_fp8 = x_fp32.to(torch.float8_e4m3fn)
-
+    x_fp32 = x / (scales_repeated + 1e-08)
+>>>>>>    x_fp8 = x_fp32.to(torch.float8_e4m3fn)
     return x_fp8, x_scale
 
 
@@ -175,43 +169,41 @@ def dequantize_fp8(x, x_scale, scale_major_mode):
         tuple: A tuple containing the quantized FP8 tensor and the
                calculated float32 scales.
     """
-    # 1. Assertions and Initial Setup
     ndim = x.ndim
     assert ndim in [2, 3], f"x.ndim must be 2 or 3, but got {ndim}"
-    assert ndim == len(x_scale.shape)
-
-    # 2. Tiling and Scale Calculation
+    assert ndim == len(tuple(x_scale.shape))
     if ndim == 2:
         if scale_major_mode == "K":
-            s0, s1 = x_scale.shape
+            s0, s1 = tuple(x_scale.shape)
         else:
-            s1, s0 = x_scale.shape
-        x = rearrange(
-            x.to(torch.float32), "(s0 t0) (s1 t1) -> s0 s1 t0 t1", s0=s0, s1=s1
+            s1, s0 = tuple(x_scale.shape)
+        x = einops.rearrange(
+            x.to("float32"), "(s0 t0) (s1 t1) -> s0 s1 t0 t1", s0=s0, s1=s1
         )
         if scale_major_mode == "K":
-            x_scale = rearrange(x_scale, "s0 s1 -> s0 s1 1 1")
+            x_scale = einops.rearrange(x_scale, "s0 s1 -> s0 s1 1 1")
         else:
-            x_scale = rearrange(x_scale, "s0 s1 -> s1 s0 1 1")
-        out = rearrange(x * x_scale, "s0 s1 t0 t1 -> (s0 t0) (s1 t1)")
-
+            x_scale = einops.rearrange(x_scale, "s0 s1 -> s1 s0 1 1")
+        out = einops.rearrange(x * x_scale, "s0 s1 t0 t1 -> (s0 t0) (s1 t1)")
     elif ndim == 3:
         if scale_major_mode == "K":
-            s0, s1, s2 = x_scale.shape
+            s0, s1, s2 = tuple(x_scale.shape)
         else:
-            s0, s2, s1 = x_scale.shape
-        x = rearrange(
-            x.to(torch.float32),
+            s0, s2, s1 = tuple(x_scale.shape)
+        x = einops.rearrange(
+            x.to("float32"),
             "(s0 t0) (s1 t1) (s2 t2)-> s0 s1 s2 t0 t1 t2",
             s0=s0,
             s1=s1,
             s2=s2,
         )
         if scale_major_mode == "K":
-            x_scale = rearrange(x_scale, "s0 s1 s2 -> s0 s1 s2 1 1 1")
+            x_scale = einops.rearrange(x_scale, "s0 s1 s2 -> s0 s1 s2 1 1 1")
         else:
-            x_scale = rearrange(x_scale, "s0 s1 s2 -> s0 s2 s1 1 1 1")
-        out = rearrange(x * x_scale, "s0 s1 s2 t0 t1 t2 -> (s0 t0) (s1 t1) (s2 t2)")
+            x_scale = einops.rearrange(x_scale, "s0 s1 s2 -> s0 s2 s1 1 1 1")
+        out = einops.rearrange(
+            x * x_scale, "s0 s1 s2 t0 t1 t2 -> (s0 t0) (s1 t1) (s2 t2)"
+        )
     return out
 
 
@@ -225,13 +217,12 @@ def set_seed(random_seed):
     Returns:
         None
     """
-    torch.manual_seed(random_seed)
+    paddle.seed(seed=random_seed)
     random.seed(random_seed)
     np.random.seed(random_seed)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(random_seed)
-        torch.cuda.manual_seed_all(random_seed)
+    if paddle.device.cuda.device_count() >= 1:
+        paddle.seed(seed=random_seed)
+        paddle.seed(seed=random_seed)
 
 
 def sleep_after_kernel_run(execution_time):
@@ -253,13 +244,7 @@ def sleep_after_kernel_run(execution_time):
 
 
 def attention_flops(
-    batch_size,
-    qo_seqlen,
-    kv_seqlen,
-    head_dim_qk,
-    head_dim_vo,
-    num_qo_heads,
-    causal,
+    batch_size, qo_seqlen, kv_seqlen, head_dim_qk, head_dim_vo, num_qo_heads, causal
 ):
     """
     Calculate FLOPs for a given attention layer. Assumes all sequence lengths are the same within the batch
@@ -324,44 +309,40 @@ def attention_flops_with_actual_seq_lens(
     """
     if causal:
         bmm1_flops = (
-            torch.dot(
-                2 * actual_seq_lens_kv.to(torch.float32)
-                - actual_seq_lens_q.to(torch.float32),
-                actual_seq_lens_q.to(torch.float32),
+            paddle.dot(
+                x=2 * actual_seq_lens_kv.to("float32")
+                - actual_seq_lens_q.to("float32"),
+                y=actual_seq_lens_q.to("float32"),
             )
             * num_qo_heads
             * head_dim_qk
         )
         bmm2_flops = (
-            torch.dot(
-                2 * actual_seq_lens_kv.to(torch.float32)
-                - actual_seq_lens_q.to(torch.float32),
-                actual_seq_lens_q.to(torch.float32),
+            paddle.dot(
+                x=2 * actual_seq_lens_kv.to("float32")
+                - actual_seq_lens_q.to("float32"),
+                y=actual_seq_lens_q.to("float32"),
             )
             * num_qo_heads
             * head_dim_vo
         )
-
     else:
         bmm1_flops = (
             2
-            * torch.dot(
-                actual_seq_lens_kv.to(torch.float32),
-                actual_seq_lens_q.to(torch.float32),
+            * paddle.dot(
+                x=actual_seq_lens_kv.to("float32"), y=actual_seq_lens_q.to("float32")
             )
             * num_qo_heads
             * head_dim_qk
         )
         bmm2_flops = (
             2
-            * torch.dot(
-                actual_seq_lens_kv.to(torch.float32),
-                actual_seq_lens_q.to(torch.float32),
+            * paddle.dot(
+                x=actual_seq_lens_kv.to("float32"), y=actual_seq_lens_q.to("float32")
             )
             * num_qo_heads
             * head_dim_vo
         )
-
     total_flops = bmm1_flops + bmm2_flops
     return total_flops
 
@@ -393,15 +374,9 @@ def attention_tflops_per_sec(
         tflops_per_sec (float): TFLOPS per second for the layer.
     """
     f = attention_flops(
-        batch_size,
-        qo_seqlen,
-        kv_seqlen,
-        head_dim_qk,
-        head_dim_vo,
-        num_qo_heads,
-        causal,
+        batch_size, qo_seqlen, kv_seqlen, head_dim_qk, head_dim_vo, num_qo_heads, causal
     )
-    return f / time / 1e9 if not math.isnan(time) else 0.0
+    return f / time / 1000000000.0 if not math.isnan(time) else 0.0
 
 
 def attention_tflops_per_sec_with_actual_seq_lens(
@@ -437,7 +412,7 @@ def attention_tflops_per_sec_with_actual_seq_lens(
         num_qo_heads,
         causal,
     )
-    return f.item() / time / 1e9 if not math.isnan(time) else 0.0
+    return f.item() / time / 1000000000.0 if not math.isnan(time) else 0.0
 
 
 def attention_tb_per_sec(
@@ -449,9 +424,9 @@ def attention_tb_per_sec(
     num_qo_heads,
     num_kv_heads,
     time,
-    q_dtype=torch.bfloat16,
-    kv_dtype=torch.bfloat16,
-    o_dtype=torch.bfloat16,
+    q_dtype="bfloat16",
+    kv_dtype="bfloat16",
+    o_dtype="bfloat16",
 ):
     """
     Calculate TB per second perf achieved for a given attention layer. Assumes all sequence lengths are the same within the batch.
@@ -472,14 +447,21 @@ def attention_tb_per_sec(
     Returns:
         tb_per_sec (float): TB per second for the layer.
     """
-    q_bytes = batch_size * qo_seqlen * num_qo_heads * head_dim_qk * q_dtype.itemsize
-    k_bytes = batch_size * kv_seqlen * num_kv_heads * head_dim_qk * kv_dtype.itemsize
-    v_bytes = batch_size * kv_seqlen * num_kv_heads * head_dim_vo * kv_dtype.itemsize
-    o_bytes = batch_size * qo_seqlen * num_qo_heads * head_dim_vo * o_dtype.itemsize
+    q_bytes = (
+        batch_size * qo_seqlen * num_qo_heads * head_dim_qk * q_dtype.element_size()
+    )
+    k_bytes = (
+        batch_size * kv_seqlen * num_kv_heads * head_dim_qk * kv_dtype.element_size()
+    )
+    v_bytes = (
+        batch_size * kv_seqlen * num_kv_heads * head_dim_vo * kv_dtype.element_size()
+    )
+    o_bytes = (
+        batch_size * qo_seqlen * num_qo_heads * head_dim_vo * o_dtype.element_size()
+    )
     total_bytes = q_bytes + k_bytes + v_bytes + o_bytes
-
-    time_in_sec = time / 1e3
-    bytes_in_tb = total_bytes / 1e12  # TB not TiB
+    time_in_sec = time / 1000.0
+    bytes_in_tb = total_bytes / 1000000000000.0
     return bytes_in_tb / time_in_sec if not math.isnan(time) else 0.0
 
 
@@ -491,9 +473,9 @@ def attention_tb_per_sec_with_actual_seq_lens(
     num_qo_heads,
     num_kv_heads,
     time,
-    q_dtype=torch.bfloat16,
-    kv_dtype=torch.bfloat16,
-    o_dtype=torch.bfloat16,
+    q_dtype="bfloat16",
+    kv_dtype="bfloat16",
+    o_dtype="bfloat16",
 ):
     """
     Calculate TB per second perf achieved for a given attention layer with actual sequence lengths.
@@ -515,22 +497,32 @@ def attention_tb_per_sec_with_actual_seq_lens(
         tb_per_sec (float): TB per second for the layer.
     """
     q_bytes = (
-        torch.sum(actual_seq_lens_q) * num_qo_heads * head_dim_qk * q_dtype.itemsize
+        paddle.sum(x=actual_seq_lens_q)
+        * num_qo_heads
+        * head_dim_qk
+        * q_dtype.element_size()
     )
     k_bytes = (
-        torch.sum(actual_seq_lens_kv) * num_kv_heads * head_dim_qk * kv_dtype.itemsize
+        paddle.sum(x=actual_seq_lens_kv)
+        * num_kv_heads
+        * head_dim_qk
+        * kv_dtype.element_size()
     )
     v_bytes = (
-        torch.sum(actual_seq_lens_kv) * num_kv_heads * head_dim_vo * kv_dtype.itemsize
+        paddle.sum(x=actual_seq_lens_kv)
+        * num_kv_heads
+        * head_dim_vo
+        * kv_dtype.element_size()
     )
     o_bytes = (
-        torch.sum(actual_seq_lens_q) * num_qo_heads * head_dim_vo * o_dtype.itemsize
+        paddle.sum(x=actual_seq_lens_q)
+        * num_qo_heads
+        * head_dim_vo
+        * o_dtype.element_size()
     )
-
     total_bytes = (q_bytes + k_bytes + v_bytes + o_bytes).item()
-
-    time_in_sec = time / 1e3
-    bytes_in_tb = total_bytes / 1e12  # TB not TiB
+    time_in_sec = time / 1000.0
+    bytes_in_tb = total_bytes / 1000000000000.0
     return bytes_in_tb / time_in_sec if not math.isnan(time) else 0.0
 
 
@@ -570,59 +562,51 @@ def bench_gpu_time(
     Returns:
         measured_times: List of measured times.
     """
-
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
+    start_event = paddle.device.cuda.Event(enable_timing=True)
+    end_event = paddle.device.cuda.Event(enable_timing=True)
     if l2_flush:
         l2_flush_size = int(l2_flush_size_mb) * 1024 * 1024
-        buffer = torch.empty(l2_flush_size, device=l2_flush_device, dtype=torch.int8)
-
-    ## Estimate kernel execution time by running the kernel 5 times
+        buffer = paddle.empty(shape=l2_flush_size, dtype="int8")
     measurement_iters = 5
-    torch.cuda.synchronize()
-    fn()  # Call once to exclude initial overhead
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
+    fn()
+    paddle.device.synchronize()
     start_event.record()
     for _ in range(measurement_iters):
         if l2_flush:
             buffer.zero_()
         fn()
     end_event.record()
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     estimated_kernel_execution_time = (
         start_event.elapsed_time(end_event) / measurement_iters
     )
-
-    ## Set dry run and repeat iterations
     if dry_run_iters is None:
         dry_run_iters = max(1, int(dry_run_time_ms / estimated_kernel_execution_time))
     if repeat_iters is None:
         repeat_iters = max(1, int(repeat_time_ms / estimated_kernel_execution_time))
-
-    # Dry runs
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     for _ in range(dry_run_iters):
         if l2_flush:
             buffer.zero_()
         fn()
-    torch.cuda.synchronize()
-
-    # Actual run
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(repeat_iters)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(repeat_iters)]
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
+    start_events = [
+        paddle.device.cuda.Event(enable_timing=True) for _ in range(repeat_iters)
+    ]
+    end_events = [
+        paddle.device.cuda.Event(enable_timing=True) for _ in range(repeat_iters)
+    ]
+    paddle.device.synchronize()
     for iter_idx in range(repeat_iters):
         if l2_flush:
             buffer.zero_()
         start_events[iter_idx].record()
         fn()
         end_events[iter_idx].record()
-
         if sleep_after_run:
             sleep_after_kernel_run(estimated_kernel_execution_time)
-
-    # Synchronize once outside of the loop to avoid synchronization overhead
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     measured_times = []
     for iter_idx in range(repeat_iters):
         measured_times.append(start_events[iter_idx].elapsed_time(end_events[iter_idx]))
@@ -671,30 +655,23 @@ def bench_gpu_time_with_cudagraph(
     Returns:
         measured_times: List of measured times.
     """
-
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
+    start_event = paddle.device.cuda.Event(enable_timing=True)
+    end_event = paddle.device.cuda.Event(enable_timing=True)
     if l2_flush:
         l2_flush_size = int(l2_flush_size_mb) * 1024 * 1024
-        buffer = torch.empty(l2_flush_size, device=l2_flush_device, dtype=torch.int8)
-
-    # Warmup run
-    torch.cuda.synchronize()
-    s = torch.cuda.Stream()
-    s.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(s):
+        buffer = paddle.empty(shape=l2_flush_size, dtype="int8")
+    paddle.device.synchronize()
+    s = paddle.device.Stream()
+    s.wait_stream(paddle.device.current_stream())
+    with paddle.device.stream_guard(stream=s):
         for _ in range(3):
             fn()
-    torch.cuda.current_stream().wait_stream(s)
-
-    # Capture kernel in graph
-    g = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(g):
+    paddle.device.current_stream().wait_stream(s)
+>>>>>>    g = torch.cuda.CUDAGraph()
+>>>>>>    with torch.cuda.graph(g):
         for _ in range(num_iters_within_graph):
             fn()
-    torch.cuda.synchronize()
-
-    ## Estimate kernel execution time by running the kernel 5 times
+    paddle.device.synchronize()
     measurement_iters = 5
     start_event.record()
     for _ in range(measurement_iters):
@@ -702,41 +679,36 @@ def bench_gpu_time_with_cudagraph(
             buffer.zero_()
         g.replay()
     end_event.record()
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     estimated_kernel_execution_time = (
         start_event.elapsed_time(end_event) / measurement_iters
     )
-
-    ## Set dry run and repeat iterations
     if dry_run_iters is None:
         dry_run_iters = max(1, int(dry_run_time_ms / estimated_kernel_execution_time))
     if repeat_iters is None:
         repeat_iters = max(1, int(repeat_time_ms / estimated_kernel_execution_time))
-
-    # Dry run
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     for _ in range(dry_run_iters):
         if l2_flush:
             buffer.zero_()
         g.replay()
-    torch.cuda.synchronize()
-
-    # Actual run
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(repeat_iters)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(repeat_iters)]
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
+    start_events = [
+        paddle.device.cuda.Event(enable_timing=True) for _ in range(repeat_iters)
+    ]
+    end_events = [
+        paddle.device.cuda.Event(enable_timing=True) for _ in range(repeat_iters)
+    ]
+    paddle.device.synchronize()
     for iter_idx in range(repeat_iters):
         if l2_flush:
             buffer.zero_()
         start_events[iter_idx].record()
         g.replay()
         end_events[iter_idx].record()
-
         if sleep_after_run:
             sleep_after_kernel_run(estimated_kernel_execution_time)
-
-    # Synchronize once outside of the loop to avoid synchronization overhead
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     measured_times = []
     for iter_idx in range(repeat_iters):
         measured_times.append(
@@ -758,19 +730,14 @@ class suppress_stdout_stderr:
     def __enter__(self):
         self.outnull_file = open(os.devnull, "w")
         self.errnull_file = open(os.devnull, "w")
-
         self.old_stdout_fileno_undup = sys.stdout.fileno()
         self.old_stderr_fileno_undup = sys.stderr.fileno()
-
         self.old_stdout_fileno = os.dup(sys.stdout.fileno())
         self.old_stderr_fileno = os.dup(sys.stderr.fileno())
-
         self.old_stdout = sys.stdout
         self.old_stderr = sys.stderr
-
         os.dup2(self.outnull_file.fileno(), self.old_stdout_fileno_undup)
         os.dup2(self.errnull_file.fileno(), self.old_stderr_fileno_undup)
-
         sys.stdout = self.outnull_file
         sys.stderr = self.errnull_file
         return self
@@ -778,18 +745,14 @@ class suppress_stdout_stderr:
     def __exit__(self, *_):
         sys.stdout = self.old_stdout
         sys.stderr = self.old_stderr
-
         os.dup2(self.old_stdout_fileno, self.old_stdout_fileno_undup)
         os.dup2(self.old_stderr_fileno, self.old_stderr_fileno_undup)
-
         os.close(self.old_stdout_fileno)
         os.close(self.old_stderr_fileno)
-
         self.outnull_file.close()
         self.errnull_file.close()
 
 
-# copied from DeepGEMM
 def bench_kineto(
     fn,
     kernel_names,
@@ -799,16 +762,9 @@ def bench_kineto(
     flush_l2: bool = True,
     with_multiple_kernels: bool = False,
 ):
-    # Conflict with Nsight Systems
     using_nsys = int(os.environ.get("DG_NSYS_PROFILING", 0))
-
-    # By default, flush L2 with an excessive 8GB memset to give the GPU some (literal) chill time without full idle
-    flush_l2_size = int(8e9 // 4)
-
-    # For some auto-tuning kernels with prints
+    flush_l2_size = int(8000000000.0 // 4)
     fn()
-
-    # Profile
     suppress = (
         suppress_stdout_stderr
         if suppress_kineto_output and not using_nsys
@@ -816,13 +772,13 @@ def bench_kineto(
     )
     with suppress():
         schedule = (
-            torch.profiler.schedule(wait=0, warmup=1, active=1, repeat=1)
+            paddle.profiler.make_scheduler(closed=0, ready=1, record=1, repeat=1)
             if not using_nsys
             else None
         )
         profiler: Any = (
-            torch.profiler.profile(
-                activities=[torch.profiler.ProfilerActivity.CUDA], schedule=schedule
+>>>>>>            torch.profiler.profile(
+>>>>>>                activities=[torch.profiler.ProfilerActivity.CUDA], schedule=schedule
             )
             if not using_nsys
             else empty_suppress()
@@ -831,22 +787,17 @@ def bench_kineto(
             for _i in range(2):
                 for _ in range(num_tests):
                     if flush_l2:
-                        torch.empty(
-                            flush_l2_size, dtype=torch.int, device="cuda"
-                        ).zero_()
+                        paddle.empty(shape=flush_l2_size, dtype="int32").zero_()
                     fn()
-
                 if not using_nsys:
                     profiler.step()
-
-    # Return 1 if using Nsight Systems
     if using_nsys:
         return 1
-
-    # Parse the profiling table
     assert isinstance(kernel_names, (str, tuple))
     is_tuple = isinstance(kernel_names, tuple)
-    prof_lines = (
+    """Not Support auto convert *.key_averages, please judge whether it is Pytorch API and convert by yourself"""
+    """Not Support auto convert *.table, please judge whether it is Pytorch API and convert by yourself"""
+>>>>>>    prof_lines = (
         profiler.key_averages()
         .table(sort_by="cuda_time_total", max_name_column_width=100)
         .split("\n")
@@ -855,16 +806,12 @@ def bench_kineto(
     assert all([isinstance(name, str) for name in kernel_names])
     if not with_multiple_kernels:
         for name in kernel_names:
-            assert sum([name in line for line in prof_lines]) == 1, (
-                f"Errors of the kernel {name} in the profiling table"
-            )
-
-    # Save chrome traces
+            assert (
+                sum([(name in line) for line in prof_lines]) == 1
+            ), f"Errors of the kernel {name} in the profiling table"
     if trace_path is not None:
-        profiler.export_chrome_trace(trace_path)
-
-    # Return average kernel times
-    units = {"ms": 1e3, "us": 1e6}
+        paddle.profiler.export_chrome_tracing(dir_name=trace_path)
+    units = {"ms": 1000.0, "us": 1000000.0}
     kernel_times = []
     for name in kernel_names:
         total_time = 0.0
@@ -881,7 +828,6 @@ def bench_kineto(
                         total_num += int(num_str)
                         break
         kernel_times.append(total_time / total_num)
-
     return tuple(kernel_times) if is_tuple else kernel_times[0]
 
 
@@ -891,5 +837,5 @@ def count_bytes(*tensors):
         if isinstance(t, (tuple, list)):
             total += count_bytes(*t)
         elif t is not None:
-            total += t.numel() * t.element_size()
+            total += t.size * t.element_size()
     return total

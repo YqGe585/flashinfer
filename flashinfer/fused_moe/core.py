@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,97 +19,73 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from enum import IntEnum
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import torch
-
 from ..artifacts import ArtifactPath, MetaInfoHash
-from ..autotuner import (
-    AutoTuner,
-    DynamicTensorSpec,
-    OptimizationProfile,
-    TunableRunner,
-    TuningConfig,
-)
+from ..autotuner import (AutoTuner, DynamicTensorSpec, OptimizationProfile,
+                         TunableRunner, TuningConfig)
 from ..jit import JitSpec
 from ..jit import env as jit_env
-from ..jit import gen_jit_spec, setup_cubin_loader, sm100a_nvcc_flags, sm90a_nvcc_flags
+from ..jit import (gen_jit_spec, setup_cubin_loader, sm90a_nvcc_flags,
+                   sm100a_nvcc_flags)
 from ..jit.cpp_ext import is_cuda_version_at_least
 from ..jit.cubin_loader import get_cubin
 from ..jit.cutlass_gemm.generate_kernels import generate_gemm_operations
-from ..utils import (
-    check_shape_dtype_device,
-    device_support_pdl,
-    get_shuffle_matrix_a_row_indices,
-    get_shuffle_matrix_sf_a_row_indices,
-    register_custom_op,
-    register_fake_op,
-)
-from .utils import (
-    get_last_power_of_2_num_tokens_buckets,
-    last_positive_power_of_2,
-    next_positive_power_of_2,
-)
+from ..utils import (check_shape_dtype_device, device_support_pdl,
+                     get_shuffle_matrix_a_row_indices,
+                     get_shuffle_matrix_sf_a_row_indices, register_custom_op,
+                     register_fake_op)
+from .utils import (get_last_power_of_2_num_tokens_buckets,
+                    last_positive_power_of_2, next_positive_power_of_2)
 
 
-# The type of method in top-K routing, for use in torch custom op
-# Please keep this in sync with the counterpart defined in include/flashinfer/trtllm/fused_moe/runner.h
 class RoutingMethodType(IntEnum):
-    # Default: Softmax -> TopK
     Default = (0,)
-    # Renormalize: TopK -> Softmax
     Renormalize = (1,)
-    # DeepSeekV3: Sigmoid -> RoutingBiasAdd -> Top2 in group -> Top4 groups -> Top8 experts from the Top4 groups
     DeepSeekV3 = (2,)
-    # Llama4: Top1 -> Sigmoid
     Llama4 = (3,)
-    # Qwen3: Softmax -> TopK -> Renormalize
     RenormalizeNaive = (4,)
-    # TopK only (no softmax)
     TopK = (5,)
-    # Unspecified
     Unspecified = 6
 
 
 class DtypeTrtllmGen(IntEnum):
     def __new__(cls, block_format_bit, signed_bit, integer_bit, num_bits, uid):
         value = (
-            (block_format_bit << 24)
-            | (signed_bit << 20)
-            | (integer_bit << 16)
-            | (num_bits << 8)
+            block_format_bit << 24
+            | signed_bit << 20
+            | integer_bit << 16
+            | num_bits << 8
             | uid
         )
         obj = int.__new__(cls, value)
         obj._value_ = value
         return obj
 
-    # keep the values in sync with include/flashinfer/trtllm/batched_gemm/trtllmGen_bmm_export/trtllm/gen/DtypeDecl.h
-    Bfloat16 = (0, 1, 0, 16, 0)
-    Bool = (0, 0, 1, 1, 1)
-    E2m1 = (1, 1, 0, 4, 2)
-    E2m3 = (1, 1, 0, 6, 3)
-    E3m2 = (1, 1, 0, 6, 4)
-    E4m3 = (0, 1, 0, 8, 5)
-    E5m2 = (0, 1, 0, 8, 6)
-    Fp16 = (0, 1, 0, 16, 7)
-    Fp32 = (0, 1, 0, 32, 8)
-    Int8 = (0, 1, 1, 8, 9)
-    Int32 = (0, 1, 1, 32, 10)
-    Int64 = (0, 1, 1, 64, 11)
-    MxE2m1 = (1, 1, 0, 4, 12)
-    MxE4m3 = (1, 1, 0, 8, 13)
-    UE8m0 = (0, 0, 0, 8, 14)
-    UInt8 = (0, 0, 1, 8, 15)
-    UInt16 = (0, 0, 1, 16, 16)
-    UInt32 = (0, 0, 1, 32, 17)
-    UInt64 = (0, 0, 1, 64, 18)
-    UInt128 = (0, 0, 1, 128, 19)
-    Void = (0, 1, 0, 0, 20)
+    Bfloat16 = 0, 1, 0, 16, 0
+    Bool = 0, 0, 1, 1, 1
+    E2m1 = 1, 1, 0, 4, 2
+    E2m3 = 1, 1, 0, 6, 3
+    E3m2 = 1, 1, 0, 6, 4
+    E4m3 = 0, 1, 0, 8, 5
+    E5m2 = 0, 1, 0, 8, 6
+    Fp16 = 0, 1, 0, 16, 7
+    Fp32 = 0, 1, 0, 32, 8
+    Int8 = 0, 1, 1, 8, 9
+    Int32 = 0, 1, 1, 32, 10
+    Int64 = 0, 1, 1, 64, 11
+    MxE2m1 = 1, 1, 0, 4, 12
+    MxE4m3 = 1, 1, 0, 8, 13
+    UE8m0 = 0, 0, 0, 8, 14
+    UInt8 = 0, 0, 1, 8, 15
+    UInt16 = 0, 0, 1, 16, 16
+    UInt32 = 0, 0, 1, 32, 17
+    UInt64 = 0, 0, 1, 64, 18
+    UInt128 = 0, 0, 1, 128, 19
+    Void = 0, 1, 0, 0, 20
 
 
 def trtllm_gen_dtype_has_scale(dtype: DtypeTrtllmGen) -> bool:
@@ -119,20 +101,18 @@ def trtllm_gen_dtype_has_scale(dtype: DtypeTrtllmGen) -> bool:
 
 
 def deduce_trtllm_gen_tensor_dtype(
-    x: torch.Tensor, scale: Optional[torch.Tensor]
+    x: paddle.Tensor, scale: Optional[paddle.Tensor]
 ) -> DtypeTrtllmGen:
-    hidden_size = x.shape[-1]
-    if x.dtype == torch.uint8:  # FIXME(siyuan): use torch.float4_e2m1x2 after torch 2.8
+    hidden_size = tuple(x.shape)[-1]
+    if x.dtype == "uint8":
         hidden_size *= 2
-    if x.dtype == torch.bfloat16:
+    if x.dtype == "bfloat16":
         dtype = DtypeTrtllmGen.Bfloat16
-    elif x.dtype == torch.float8_e4m3fn:
+>>>>>>    elif x.dtype == torch.float8_e4m3fn:
         dtype = DtypeTrtllmGen.E4m3 if scale is None else DtypeTrtllmGen.MxE4m3
-    elif (
-        x.dtype == torch.uint8
-    ):  # FIXME(siyuan): use torch.float4_e2m1x2 after torch 2.8
+    elif x.dtype == "uint8":
         assert scale is not None, "Scale tensor must be provided for float4x2 input"
-        if scale.shape[-1] == hidden_size // 16:
+        if tuple(scale.shape)[-1] == hidden_size // 16:
             dtype = DtypeTrtllmGen.E2m1
         else:
             dtype = DtypeTrtllmGen.MxE2m1
@@ -141,34 +121,24 @@ def deduce_trtllm_gen_tensor_dtype(
     return dtype
 
 
-# See MatrixLayout from include/flashinfer/trtllm/batched_gemm/trtllmGen_bmm_export/Enums.h
 class WeightLayout(IntEnum):
-    # K-major layout (default). [Mn, K]
     MajorK = 0
-    # M-major for A and N-major for B. [K, Mn]
     MajorMn = 1
-    # Layout is blocked along the K dimension. [K / blockK, Mn, blockK]
-    # where blockK is fixed at 128B
     BlockMajorK = 2
 
 
-# The type of gated activation function
-# Please keep this in sync with the counterpart defined in include/flashinfer/trtllm/fused_moe/runner.h
 class GatedActType(IntEnum):
-    # SwiGlu
     SwiGlu = 0
-    # GeGlu
     GeGlu = 1
 
 
 def _maybe_get_cached_w3_w1_permute_indices(
     _cache_permute_indices,
-    dst_w3_w1_weight: torch.Tensor,
+    dst_w3_w1_weight: paddle.Tensor,
     epilogue_tile_m: int,
     num_elts_per_sf: Union[None, int] = None,
-) -> torch.Tensor:
-    if dst_w3_w1_weight.shape not in _cache_permute_indices:
-        # Get permute indices and chain them together
+) -> paddle.Tensor:
+    if tuple(dst_w3_w1_weight.shape) not in _cache_permute_indices:
         permute0 = get_reorder_rows_for_gated_act_gemm_row_indices(dst_w3_w1_weight)
         if num_elts_per_sf is None:
             permute1 = get_shuffle_matrix_a_row_indices(
@@ -180,38 +150,36 @@ def _maybe_get_cached_w3_w1_permute_indices(
                 epilogue_tile_m=epilogue_tile_m,
                 num_elts_per_sf=num_elts_per_sf,
             )
-        # Memoize permute indices as recompute is **very** costly
-        _cache_permute_indices[dst_w3_w1_weight.shape] = permute0[permute1].to(
-            dst_w3_w1_weight.device
+        _cache_permute_indices[tuple(dst_w3_w1_weight.shape)] = permute0[permute1].to(
+            dst_w3_w1_weight.place
         )
-    permute_indices = _cache_permute_indices[dst_w3_w1_weight.shape]
+    permute_indices = _cache_permute_indices[tuple(dst_w3_w1_weight.shape)]
     return permute_indices
 
 
 def _maybe_get_cached_w2_permute_indices(
     _cache_permute_indices,
-    dst_w2_weight: torch.Tensor,
+    dst_w2_weight: paddle.Tensor,
     epilogue_tile_m: int,
     num_elts_per_sf: Union[None, int] = None,
-) -> torch.Tensor:
-    if dst_w2_weight.shape not in _cache_permute_indices:
+) -> paddle.Tensor:
+    if tuple(dst_w2_weight.shape) not in _cache_permute_indices:
         if num_elts_per_sf is None:
             permute_indices = get_shuffle_matrix_a_row_indices(
                 dst_w2_weight, epilogue_tile_m
-            ).to(dst_w2_weight.device)
+            ).to(dst_w2_weight.place)
         else:
             permute_indices = get_shuffle_matrix_sf_a_row_indices(
                 dst_w2_weight,
                 epilogue_tile_m=epilogue_tile_m,
                 num_elts_per_sf=num_elts_per_sf,
-            ).to(dst_w2_weight.device)
-        # Memoize permute indices as recompute is **very** costly
-        _cache_permute_indices[dst_w2_weight.shape] = permute_indices
-    permute_indices = _cache_permute_indices[dst_w2_weight.shape]
+            ).to(dst_w2_weight.place)
+        _cache_permute_indices[tuple(dst_w2_weight.shape)] = permute_indices
+    permute_indices = _cache_permute_indices[tuple(dst_w2_weight.shape)]
     return permute_indices
 
 
-def get_reorder_rows_for_gated_act_gemm_row_indices(x) -> torch.Tensor:
+def get_reorder_rows_for_gated_act_gemm_row_indices(x) -> paddle.Tensor:
     """
     Reorders rows in the gemm/MOE_gemm weight matrix for min-latency
     [r0, r1, r2, r3, ..., rN/2, r(N/2+1), .. r(N-1)]
@@ -219,23 +187,14 @@ def get_reorder_rows_for_gated_act_gemm_row_indices(x) -> torch.Tensor:
     [r0, rN/2, r1, rN/2+1, ..., r(N/2-1), r(N-1)]
     """
     assert x.dim() == 2, f"x should be a 2D tensor, not {x.dim()}"
-    M, K = x.shape
+    M, K = tuple(x.shape)
     assert M % 2 == 0, f"x.shape[0] must be even, not {M}"
-
-    row_indices = torch.arange(M, dtype=torch.long)
-
-    # We split into top half and bottom half, but if M is odd,
-    # the bottom half is one row larger.
-    top = row_indices[: (M + 1) // 2]  # round up
-    bot = row_indices[(M + 1) // 2 :]  # remainder
-
-    # Create the output
-    permuted_row_indices = torch.empty_like(row_indices)
-
-    # We'll place rows of `top` and `bot` in alternation
+    row_indices = paddle.arange(dtype="int64", end=M)
+    top = row_indices[: (M + 1) // 2]
+    bot = row_indices[(M + 1) // 2 :]
+    permuted_row_indices = paddle.empty_like(x=row_indices)
     permuted_row_indices[0::2] = top
     permuted_row_indices[1::2] = bot
-
     return permuted_row_indices
 
 
@@ -244,16 +203,16 @@ def reorder_rows_for_gated_act_gemm(x):
     PyTorch implementation of trt-llm gen `reorderRowsForGatedActGemm`
     """
     row_indices = get_reorder_rows_for_gated_act_gemm_row_indices(x)
-
     permute = lambda x: x[row_indices]
-
     return permute(x)
 
 
-def convert_to_block_layout(input_tensor: torch.Tensor, blockK: int) -> torch.Tensor:
-    M, K = input_tensor.shape
+def convert_to_block_layout(input_tensor: paddle.Tensor, blockK: int) -> paddle.Tensor:
+    M, K = tuple(input_tensor.shape)
     assert K % blockK == 0, "K must be divisible by blockK"
-    return input_tensor.view(M, K // blockK, blockK).permute(1, 0, 2).contiguous()
+    return (
+        input_tensor.view(M, K // blockK, blockK).transpose(perm=[1, 0, 2]).contiguous()
+    )
 
 
 def gen_cutlass_fused_moe_sm100_module(use_fast_build: bool = False) -> JitSpec:
@@ -290,19 +249,11 @@ def gen_cutlass_fused_moe_module(
         jit_env.FLASHINFER_CSRC_DIR
         / f"nv_internal/tensorrt_llm/cutlass_instantiations/{device_arch}"
     )
-
     try:
-        # Create output directory if it doesn't exist
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        generate_gemm_operations(
-            output_dir,
-            f"{device_arch};{device_arch}-real",
-        )
-
+        generate_gemm_operations(output_dir, f"{device_arch};{device_arch}-real")
     except Exception as e:
         raise RuntimeError(f"Failed to generate Cutlass kernels: {e}") from e
-
     return gen_jit_spec(
         f"fused_moe_{device_arch}",
         [
@@ -342,7 +293,6 @@ def gen_cutlass_fused_moe_module(
             / "fused_moe/cutlass_backend/flashinfer_cutlass_fused_moe_sm100_ops.cu",
             jit_env.FLASHINFER_CSRC_DIR
             / "fused_moe/cutlass_backend/cutlass_fused_moe_instantiation.cu",
-            # Add all generated kernels
             *(output_dir / kernel for kernel in output_dir.rglob("*.generated.cu")),
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal/cpp/common/envUtils.cpp",
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal/cpp/common/logger.cpp",
@@ -396,9 +346,8 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
         raise ValueError(f"Invalid backend: {backend}")
 
     class MoERunner(TunableRunner):
-        # avoid overhead of creating a new runner in forward pass
         runner_dict: Dict[
-            Tuple[torch.dtype, torch.dtype, torch.dtype, bool, bool, bool], Any
+            Tuple[paddle.dtype, paddle.dtype, paddle.dtype, bool, bool, bool], Any
         ] = dict()
         tuning_config = TuningConfig(
             dynamic_tensor_specs=(
@@ -413,9 +362,9 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
 
         def __init__(
             self,
-            x_dtype: torch.dtype,
-            weight_dtype: torch.dtype,
-            output_dtype: torch.dtype,
+            x_dtype: paddle.dtype,
+            weight_dtype: paddle.dtype,
+            output_dtype: paddle.dtype,
             top_k: int,
             tp_size: int,
             tp_rank: int,
@@ -454,7 +403,6 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
                 use_w4_group_scaling,
                 use_mxfp8_act_scaling,
             )
-
             if instance_key not in MoERunner.runner_dict:
                 MoERunner.runner_dict[instance_key] = FusedMoeRunner(
                     x_dtype,
@@ -464,19 +412,16 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
                     use_w4_group_scaling,
                     use_mxfp8_act_scaling,
                 )
-
             self.fused_moe_runner = MoERunner.runner_dict[instance_key]
 
         def get_valid_tactics(
-            self,
-            inputs: List[torch.Tensor],
-            profile: OptimizationProfile,
+            self, inputs: List[paddle.Tensor], profile: OptimizationProfile
         ) -> List[int]:
             return list(range(self.fused_moe_runner.get_tactic_num()))
 
         def forward(
             self,
-            inputs: List[torch.Tensor],
+            inputs: List[paddle.Tensor],
             tactic: int = -1,
             do_preparation: bool = False,
             **kwargs,
@@ -523,25 +468,22 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
                 )
             )
 
-    @register_custom_op(
-        "flashinfer::cutlass_fused_moe",
-        mutates_args=(""),
-    )
+    @register_custom_op("flashinfer::cutlass_fused_moe", mutates_args="")
     def cutlass_fused_moe(
-        output: torch.Tensor,
-        input: torch.Tensor,
-        token_selected_experts: torch.Tensor,
-        token_final_scales: torch.Tensor,
-        fc1_expert_weights: torch.Tensor,
-        fc1_expert_biases: Optional[torch.Tensor],
-        fc2_expert_weights: torch.Tensor,
-        fc2_expert_biases: Optional[torch.Tensor],
-        output_dtype: torch.dtype,
-        quant_scales: List[torch.Tensor],
-        input_sf: Optional[torch.Tensor] = None,
-        swiglu_alpha: Optional[torch.Tensor] = None,
-        swiglu_beta: Optional[torch.Tensor] = None,
-        swiglu_limit: Optional[torch.Tensor] = None,
+        output: paddle.Tensor,
+        input: paddle.Tensor,
+        token_selected_experts: paddle.Tensor,
+        token_final_scales: paddle.Tensor,
+        fc1_expert_weights: paddle.Tensor,
+        fc1_expert_biases: Optional[paddle.Tensor],
+        fc2_expert_weights: paddle.Tensor,
+        fc2_expert_biases: Optional[paddle.Tensor],
+        output_dtype: paddle.dtype,
+        quant_scales: List[paddle.Tensor],
+        input_sf: Optional[paddle.Tensor] = None,
+        swiglu_alpha: Optional[paddle.Tensor] = None,
+        swiglu_beta: Optional[paddle.Tensor] = None,
+        swiglu_limit: Optional[paddle.Tensor] = None,
         tp_size: int = 1,
         tp_rank: int = 0,
         ep_size: int = 1,
@@ -555,18 +497,16 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
         min_latency_mode: bool = False,
         tune_max_num_tokens: int = 8192,
         enable_pdl: Optional[bool] = None,
-    ) -> List[torch.Tensor]:
+    ) -> List[paddle.Tensor]:
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(input.device)
+            enable_pdl = device_support_pdl(input.place)
         tuner = AutoTuner.get()
         MoERunner.refine_tuning_config(tune_max_num_tokens)
-
-        # allocate workspace for profiling
         moe_runner = MoERunner(
             x_dtype=input.dtype,
             weight_dtype=fc1_expert_weights.dtype,
             output_dtype=output_dtype,
-            top_k=token_selected_experts.size(1),
+            top_k=token_selected_experts.shape[1],
             tp_size=tp_size,
             tp_rank=tp_rank,
             ep_size=ep_size,
@@ -580,7 +520,6 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
             min_latency_mode=min_latency_mode,
             enable_pdl=enable_pdl,
         )
-
         _, gemm_tactic_1 = tuner.choose_one(
             "trtllm::fused_moe::gemm1",
             [moe_runner],
@@ -594,7 +533,6 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
             ],
             gemm_idx=1,
         )
-
         _, gemm_tactic_2 = tuner.choose_one(
             "trtllm::fused_moe::gemm2",
             [moe_runner],
@@ -608,7 +546,6 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
             ],
             gemm_idx=2,
         )
-
         run_moe = (
             moe_runner.fused_moe_runner.run_moe_min_latency
             if min_latency_mode
@@ -639,25 +576,24 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
             [gemm_tactic_1, gemm_tactic_2],
             enable_pdl,
         )
-
         return result if min_latency_mode else [result]
 
     @register_fake_op("flashinfer::cutlass_fused_moe")
     def _fake_cutlass_fused_moe(
-        output: torch.Tensor,
-        input: torch.Tensor,
-        token_selected_experts: torch.Tensor,
-        token_final_scales: torch.Tensor,
-        fc1_expert_weights: torch.Tensor,
-        fc1_expert_biases: Optional[torch.Tensor],
-        fc2_expert_weights: torch.Tensor,
-        fc2_expert_biases: Optional[torch.Tensor],
-        output_dtype: torch.dtype,
-        quant_scales: List[torch.Tensor],
-        input_sf: Optional[torch.Tensor] = None,
-        swiglu_alpha: Optional[torch.Tensor] = None,
-        swiglu_beta: Optional[torch.Tensor] = None,
-        swiglu_limit: Optional[torch.Tensor] = None,
+        output: paddle.Tensor,
+        input: paddle.Tensor,
+        token_selected_experts: paddle.Tensor,
+        token_final_scales: paddle.Tensor,
+        fc1_expert_weights: paddle.Tensor,
+        fc1_expert_biases: Optional[paddle.Tensor],
+        fc2_expert_weights: paddle.Tensor,
+        fc2_expert_biases: Optional[paddle.Tensor],
+        output_dtype: paddle.dtype,
+        quant_scales: List[paddle.Tensor],
+        input_sf: Optional[paddle.Tensor] = None,
+        swiglu_alpha: Optional[paddle.Tensor] = None,
+        swiglu_beta: Optional[paddle.Tensor] = None,
+        swiglu_limit: Optional[paddle.Tensor] = None,
         tp_size: int = 1,
         tp_rank: int = 0,
         ep_size: int = 1,
@@ -672,51 +608,46 @@ def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = Fa
         tune_max_num_tokens: int = 8192,
         enable_pdl: Optional[bool] = None,
     ):
-        seq_len = input.shape[0]
-        hidden_size = fc2_expert_weights.shape[1]
-
+        seq_len = tuple(input.shape)[0]
+        hidden_size = tuple(fc2_expert_weights.shape)[1]
         if min_latency_mode:
-            num_experts_on_rank = fc2_expert_weights.shape[0]
+            num_experts_on_rank = tuple(fc2_expert_weights.shape)[0]
             output_shape = [seq_len * num_experts_on_rank, hidden_size]
             experts_to_token_score_shape = [num_experts_on_rank, seq_len]
             active_expert_global_ids_shape = [num_experts_on_rank]
             return [
-                input.new_empty(output_shape, dtype=output_dtype),
-                input.new_empty([1], dtype=torch.int32),
-                input.new_empty(experts_to_token_score_shape, dtype=torch.float32),
-                input.new_empty(active_expert_global_ids_shape, dtype=torch.int32),
+                paddle.empty(shape=output_shape, dtype=output_dtype),
+                paddle.empty(shape=[1], dtype="int32"),
+                paddle.empty(shape=experts_to_token_score_shape, dtype="float32"),
+                paddle.empty(shape=active_expert_global_ids_shape, dtype="int32"),
             ]
         else:
-            return [input.new_empty([seq_len, hidden_size], dtype=output_dtype)]
+            return [paddle.empty(shape=[seq_len, hidden_size], dtype=output_dtype)]
 
-    # Register the module
-    return SimpleNamespace(
-        cutlass_fused_moe=cutlass_fused_moe,
-    )
+    return SimpleNamespace(cutlass_fused_moe=cutlass_fused_moe)
 
 
-# ref: https://github.com/NVIDIA/TensorRT-LLM/blob/main/tensorrt_llm/_torch/custom_ops/torch_custom_ops.py#L121
 def cutlass_fused_moe(
-    input: torch.Tensor,
-    token_selected_experts: torch.Tensor,
-    token_final_scales: torch.Tensor,
-    fc1_expert_weights: torch.Tensor,
-    fc2_expert_weights: torch.Tensor,
-    output_dtype: torch.dtype,
-    quant_scales: List[torch.Tensor],
-    fc1_expert_biases: Optional[torch.Tensor] = None,
-    fc2_expert_biases: Optional[torch.Tensor] = None,
-    input_sf: Optional[torch.Tensor] = None,
-    swiglu_alpha: Optional[torch.Tensor] = None,
-    swiglu_beta: Optional[torch.Tensor] = None,
-    swiglu_limit: Optional[torch.Tensor] = None,
+    input: paddle.Tensor,
+    token_selected_experts: paddle.Tensor,
+    token_final_scales: paddle.Tensor,
+    fc1_expert_weights: paddle.Tensor,
+    fc2_expert_weights: paddle.Tensor,
+    output_dtype: paddle.dtype,
+    quant_scales: List[paddle.Tensor],
+    fc1_expert_biases: Optional[paddle.Tensor] = None,
+    fc2_expert_biases: Optional[paddle.Tensor] = None,
+    input_sf: Optional[paddle.Tensor] = None,
+    swiglu_alpha: Optional[paddle.Tensor] = None,
+    swiglu_beta: Optional[paddle.Tensor] = None,
+    swiglu_limit: Optional[paddle.Tensor] = None,
     tp_size: int = 1,
     tp_rank: int = 0,
     ep_size: int = 1,
     ep_rank: int = 0,
     cluster_size: int = 1,
     cluster_rank: int = 0,
-    output: Optional[torch.Tensor] = None,
+    output: Optional[paddle.Tensor] = None,
     enable_alltoall: bool = False,
     use_deepseek_fp8_block_scale: bool = False,
     use_w4_group_scaling: bool = False,
@@ -724,7 +655,7 @@ def cutlass_fused_moe(
     min_latency_mode: bool = False,
     tune_max_num_tokens: int = 8192,
     enable_pdl: Optional[bool] = None,
-) -> torch.Tensor:
+) -> paddle.Tensor:
     """Compute a Mixture of Experts (MoE) layer using CUTLASS backend.
 
     This function implements a fused MoE layer that combines expert selection, expert computation,
@@ -855,26 +786,21 @@ def cutlass_fused_moe(
         )
     if min_latency_mode:
         raise NotImplementedError("min latency mode not yet implemented for Blackwell.")
-
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
-
-    num_rows = input.shape[0]
+        enable_pdl = device_support_pdl(input.place)
+    num_rows = tuple(input.shape)[0]
     if min_latency_mode:
-        num_rows *= fc2_expert_weights.shape[0]
-    hidden_size = fc2_expert_weights.shape[1]
-    output_shape = (num_rows, hidden_size)
-
+        num_rows *= tuple(fc2_expert_weights.shape)[0]
+    hidden_size = tuple(fc2_expert_weights.shape)[1]
+    output_shape = num_rows, hidden_size
     if output is None:
-        output = torch.empty(output_shape, dtype=output_dtype, device=input.device)
+        output = paddle.empty(shape=output_shape, dtype=output_dtype)
     else:
         check_shape_dtype_device(
-            output, output_shape, output_dtype, input.device, "output"
+            output, output_shape, output_dtype, input.place, "output"
         )
-
-    major, minor = torch.cuda.get_device_capability()
+    major, minor = paddle.device.cuda.get_device_capability()
     device_arch = f"{major * 10 + minor}"
-
     return get_cutlass_fused_moe_module(device_arch).cutlass_fused_moe(
         output,
         input,
@@ -906,23 +832,13 @@ def cutlass_fused_moe(
     )
 
 
-# trtllmgen-moe-fp8
-
-
 def trtllm_gen_fused_moe_sm100_module() -> JitSpec:
-    # Fetch "flashinferMetaInfo.h" from the online kernel cache. This file
-    # contains the `tllmGenBatchedGemmList` as the list of available kernels
-    # online. It is included when compiling `trtllm_fused_moe_runner.cu`, etc.
     include_path = f"{ArtifactPath.TRTLLM_GEN_BMM}/include"
     header_name = "flashinferMetaInfo"
-
-    # use `get_cubin` to get "flashinferMetaInfo.h"
     metainfo = get_cubin(
         f"{include_path}/{header_name}", MetaInfoHash.TRTLLM_GEN_BMM, ".h"
     )
-    # make sure "flashinferMetaInfo.h" is downloaded or cached
     assert metainfo, f"{header_name}.h not found"
-
     return gen_jit_spec(
         "fused_moe_trtllm_sm100",
         [
@@ -950,7 +866,6 @@ def trtllm_gen_fused_moe_sm100_module() -> JitSpec:
         + sm100a_nvcc_flags,
         extra_ldflags=["-lcuda"],
         extra_include_paths=[
-            # link "include" sub-directory in cache
             jit_env.FLASHINFER_CUBIN_DIR / include_path,
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal",
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal/include",
@@ -966,26 +881,13 @@ def get_trtllm_moe_sm100_module():
 
     class MoERunner(TunableRunner):
         dynamic_tensor_initializers = [
-            lambda shapes, dtype, device: torch.empty(
-                shapes, device=device, dtype=dtype
-            ),  # output buffer, [num_tokens, hidden_size]
-            lambda shapes, dtype, device: torch.rand(
-                shapes, device=device, dtype=dtype
-            ),  # routing_logits, [num_tokens, num_experts]
-            lambda shapes, dtype, device: torch.empty(
-                shapes, device=device, dtype=dtype
-            ),  # topk_ids buffer. empty since routing_logits is used. [num_tokens, topk]
-            lambda shapes, dtype, device: torch.empty(
-                shapes, device=device, dtype=dtype
-            ),  # expert_weights buffer. empty since routing_logits is used. [num_tokens, topk]
-            lambda shapes, dtype, device: torch.randn(shapes, device=device).to(
-                dtype
-            ),  # hidden_states, [num_tokens, hidden_size]
-            lambda shapes, dtype, device: torch.ones(shapes, device=device).to(
-                dtype
-            ),  # hidden_states_scale, [num_tokens, hidden_size // sf_vec_size]
+            lambda shapes, dtype, device: paddle.empty(shape=shapes, dtype=dtype),
+            lambda shapes, dtype, device: paddle.rand(shape=shapes, dtype=dtype),
+            lambda shapes, dtype, device: paddle.empty(shape=shapes, dtype=dtype),
+            lambda shapes, dtype, device: paddle.empty(shape=shapes, dtype=dtype),
+            lambda shapes, dtype, device: paddle.randn(shape=shapes).to(dtype),
+            lambda shapes, dtype, device: paddle.ones(shape=shapes).to(dtype),
         ]
-        # their first dimension is num_tokens which will be tuned
         tuning_config_with_hidden_states_scales = TuningConfig(
             dynamic_tensor_specs=(
                 DynamicTensorSpec(
@@ -1006,10 +908,8 @@ def get_trtllm_moe_sm100_module():
                     lambda x: min(last_positive_power_of_2(x), 1024),
                     dynamic_tensor_initializers[:5],
                 ),
-            ),
+            )
         )
-        # cache the valid tactics to reduce the overhead of instantiating the runner
-        # TODO(siyuan): directly cache the runners
         valid_tactics_dict = dict()
 
         def __init__(
@@ -1036,31 +936,15 @@ def get_trtllm_moe_sm100_module():
             self.tile_tokens_dim = tile_tokens_dim
 
         def get_tile_tokens_dim(self, num_tokens: int, top_k: int):
-            # Factor to account for the imbalance of the experts.
-            # factor equals to the
-            # max_real_num_tokens_per_expert / perfect_num_tokens_per_expert
-            # - 1.0 means perfect expert distribution.
-            # - > 1.0 means some experts have more
-            #     tokens than the perfect distribution.
-            # - < 1.0 does not make sense.
             imbalance_factor = 1.3
-            # Calculate the number of tokens per expert
-            # assuming perfect distribution.
-            num_tokens_per_expert = (num_tokens * top_k) // self.num_experts
-            # Apply the imbalance factor.
+            num_tokens_per_expert = num_tokens * top_k // self.num_experts
             num_tokens_per_expert = int(num_tokens_per_expert * imbalance_factor)
-            # And pad the number to the next power of 2.
             tile_tokens_dim = next_positive_power_of_2(num_tokens_per_expert)
-            # Cap to 8-64 tokens per CTA tile
-            # as it's the range supported by the kernel.
             tile_tokens_dim = min(max(tile_tokens_dim, 8), 64)
-
             return tile_tokens_dim
 
         def get_valid_tactics(
-            self,
-            inputs: List[torch.Tensor],
-            profile: OptimizationProfile,
+            self, inputs: List[paddle.Tensor], profile: OptimizationProfile
         ) -> List[int]:
             (
                 output,
@@ -1070,7 +954,7 @@ def get_trtllm_moe_sm100_module():
                 hidden_states,
                 *extra_inputs,
             ) = inputs
-            num_tokens = routing_logits.shape[0]
+            num_tokens = tuple(routing_logits.shape)[0]
             tile_tokens_dim = (
                 self.get_tile_tokens_dim(num_tokens, self.top_k)
                 if self.tile_tokens_dim is None
@@ -1089,14 +973,14 @@ def get_trtllm_moe_sm100_module():
                 num_tokens,
             )
             if instance_key not in MoERunner.valid_tactics_dict:
-                MoERunner.valid_tactics_dict[instance_key] = (
-                    moe_op.trtllm_get_valid_moe_configs(*instance_key)
-                )
+                MoERunner.valid_tactics_dict[
+                    instance_key
+                ] = moe_op.trtllm_get_valid_moe_configs(*instance_key)
             return MoERunner.valid_tactics_dict[instance_key]
 
         def forward(
             self,
-            inputs: List[torch.Tensor],
+            inputs: List[paddle.Tensor],
             tactic: int = -1,
             do_preparation: bool = False,
             **kwargs,
@@ -1109,45 +993,42 @@ def get_trtllm_moe_sm100_module():
                 hidden_states,
                 *extra_inputs,
             ) = inputs
-            num_tokens = routing_logits.shape[0]
+            num_tokens = tuple(routing_logits.shape)[0]
             tile_tokens_dim = (
                 self.get_tile_tokens_dim(num_tokens, self.top_k)
                 if self.tile_tokens_dim is None
                 else self.tile_tokens_dim
             )
-
             extra_input_idx = 0
             if trtllm_gen_dtype_has_scale(self.dtype_act):
                 hidden_states_scale = extra_inputs[extra_input_idx]
                 extra_input_idx += 1
             else:
                 hidden_states_scale = None
-            # sanity checks to ensure that dynamic tensors have the correct shapes
-            assert output.shape[0] == num_tokens, (
-                "output's first dimension must be batch size."
-            )
-            assert topk_ids.shape[0] == num_tokens, (
-                "topk_ids's first dimension must be batch size."
-            )
-            assert expert_weights.shape[0] == num_tokens, (
-                "expert_weights's first dimension must be batch size."
-            )
-            assert hidden_states.shape[0] == num_tokens, (
-                "hidden_states's first dimension must be batch size."
-            )
-            assert hidden_states_scale is None or (
-                hidden_states_scale.dim() == 2
-                and hidden_states_scale.shape[0] == num_tokens
+            assert (
+                tuple(output.shape)[0] == num_tokens
+            ), "output's first dimension must be batch size."
+            assert (
+                tuple(topk_ids.shape)[0] == num_tokens
+            ), "topk_ids's first dimension must be batch size."
+            assert (
+                tuple(expert_weights.shape)[0] == num_tokens
+            ), "expert_weights's first dimension must be batch size."
+            assert (
+                tuple(hidden_states.shape)[0] == num_tokens
+            ), "hidden_states's first dimension must be batch size."
+            assert (
+                hidden_states_scale is None
+                or hidden_states_scale.dim() == 2
+                and tuple(hidden_states_scale.shape)[0] == num_tokens
             ), "hidden_states_scale's first dimension must be batch size"
-
-            # TODO(siyuan): support fp8
             moe_op.trtllm_fp4_block_scale_moe(
-                routing_logits.to(torch.bfloat16),
+                routing_logits.to("bfloat16"),
                 topk_ids,
                 expert_weights,
                 kwargs["routing_bias"],
                 hidden_states,
-                hidden_states_scale,  # hidden_states_scale
+                hidden_states_scale,
                 kwargs["gemm1_weights"],
                 kwargs["gemm1_weights_scale"],
                 kwargs["gemm1_bias"],
@@ -1200,22 +1081,19 @@ def get_trtllm_moe_sm100_module():
                         lambda x: min(last_positive_power_of_2(x), tune_max_num_tokens),
                         cls.dynamic_tensor_initializers[:5],
                     ),
-                ),
+                )
             )
 
-    @register_custom_op(
-        "flashinfer::trtllm_fp8_per_tensor_scale_moe",
-        mutates_args=(""),
-    )
+    @register_custom_op("flashinfer::trtllm_fp8_per_tensor_scale_moe", mutates_args="")
     def trtllm_fp8_per_tensor_scale_moe_op(
-        routing_logits: torch.Tensor,
-        routing_bias: Optional[torch.Tensor],
-        hidden_states: torch.Tensor,
-        gemm1_weights: torch.Tensor,
-        output1_scales_scalar: torch.Tensor,
-        output1_scales_gate_scalar: torch.Tensor,
-        gemm2_weights: torch.Tensor,
-        output2_scales_scalar: torch.Tensor,
+        routing_logits: paddle.Tensor,
+        routing_bias: Optional[paddle.Tensor],
+        hidden_states: paddle.Tensor,
+        gemm1_weights: paddle.Tensor,
+        output1_scales_scalar: paddle.Tensor,
+        output1_scales_gate_scalar: paddle.Tensor,
+        gemm2_weights: paddle.Tensor,
+        output2_scales_scalar: paddle.Tensor,
         num_experts: int,
         top_k: int,
         n_group: int,
@@ -1228,10 +1106,9 @@ def get_trtllm_moe_sm100_module():
         tile_tokens_dim: int = 8,
         routing_method_type: int = 0,
         enable_pdl: Optional[bool] = None,
-    ) -> torch.Tensor:
+    ) -> paddle.Tensor:
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(hidden_states.device)
-        # Call the C++ function
+            enable_pdl = device_support_pdl(hidden_states.place)
         output = moe_op.trtllm_fp8_per_tensor_scale_moe(
             routing_logits,
             routing_bias,
@@ -1258,14 +1135,14 @@ def get_trtllm_moe_sm100_module():
 
     @register_fake_op("flashinfer::trtllm_fp8_per_tensor_scale_moe")
     def _fake_trtllm_fp8_per_tensor_scale_moe(
-        routing_logits: torch.Tensor,
-        routing_bias: Optional[torch.Tensor],
-        hidden_states: torch.Tensor,
-        gemm1_weights: torch.Tensor,
-        output1_scales_scalar: torch.Tensor,
-        output1_scales_gate_scalar: torch.Tensor,
-        gemm2_weights: torch.Tensor,
-        output2_scales_scalar: torch.Tensor,
+        routing_logits: paddle.Tensor,
+        routing_bias: Optional[paddle.Tensor],
+        hidden_states: paddle.Tensor,
+        gemm1_weights: paddle.Tensor,
+        output1_scales_scalar: paddle.Tensor,
+        output1_scales_gate_scalar: paddle.Tensor,
+        gemm2_weights: paddle.Tensor,
+        output2_scales_scalar: paddle.Tensor,
         num_experts: int,
         top_k: int,
         n_group: int,
@@ -1279,24 +1156,20 @@ def get_trtllm_moe_sm100_module():
         routing_method_type: int = 0,
         enable_pdl: Optional[bool] = None,
     ):
-        seq_len = hidden_states.shape[0]
-        hidden_size = hidden_states.shape[1]
+        seq_len = tuple(hidden_states.shape)[0]
+        hidden_size = tuple(hidden_states.shape)[1]
+        return [paddle.empty(shape=[seq_len, hidden_size], dtype="bfloat16")]
 
-        return [hidden_states.new_empty([seq_len, hidden_size], dtype=torch.bfloat16)]
-
-    @register_custom_op(
-        "flashinfer::trtllm_fp8_block_scale_moe",
-        mutates_args=(""),
-    )
+    @register_custom_op("flashinfer::trtllm_fp8_block_scale_moe", mutates_args="")
     def trtllm_fp8_block_scale_moe_op(
-        routing_logits: torch.Tensor,
-        routing_bias: Optional[torch.Tensor],
-        hidden_states: torch.Tensor,
-        hidden_states_scale: torch.Tensor,
-        gemm1_weights: torch.Tensor,
-        gemm1_weights_scale: torch.Tensor,
-        gemm2_weights: torch.Tensor,
-        gemm2_weights_scale: torch.Tensor,
+        routing_logits: paddle.Tensor,
+        routing_bias: Optional[paddle.Tensor],
+        hidden_states: paddle.Tensor,
+        hidden_states_scale: paddle.Tensor,
+        gemm1_weights: paddle.Tensor,
+        gemm1_weights_scale: paddle.Tensor,
+        gemm2_weights: paddle.Tensor,
+        gemm2_weights_scale: paddle.Tensor,
         num_experts: int,
         top_k: int,
         n_group: int,
@@ -1310,10 +1183,9 @@ def get_trtllm_moe_sm100_module():
         use_shuffled_weight: bool = False,
         weight_layout: int = 0,
         enable_pdl: Optional[bool] = None,
-    ) -> torch.Tensor:
+    ) -> paddle.Tensor:
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(hidden_states.device)
-        # Call the C++ function for block scale MoE
+            enable_pdl = device_support_pdl(hidden_states.place)
         output = moe_op.trtllm_fp8_block_scale_moe(
             routing_logits,
             routing_bias,
@@ -1337,19 +1209,18 @@ def get_trtllm_moe_sm100_module():
             weight_layout,
             enable_pdl,
         )
-
         return output
 
     @register_fake_op("flashinfer::trtllm_fp8_block_scale_moe")
     def _fake_trtllm_fp8_block_scale_moe(
-        routing_logits: torch.Tensor,
-        routing_bias: Optional[torch.Tensor],
-        hidden_states: torch.Tensor,
-        hidden_states_scale: torch.Tensor,
-        gemm1_weights: torch.Tensor,
-        gemm1_weights_scale: torch.Tensor,
-        gemm2_weights: torch.Tensor,
-        gemm2_weights_scale: torch.Tensor,
+        routing_logits: paddle.Tensor,
+        routing_bias: Optional[paddle.Tensor],
+        hidden_states: paddle.Tensor,
+        hidden_states_scale: paddle.Tensor,
+        gemm1_weights: paddle.Tensor,
+        gemm1_weights_scale: paddle.Tensor,
+        gemm2_weights: paddle.Tensor,
+        gemm2_weights_scale: paddle.Tensor,
         num_experts: int,
         top_k: int,
         n_group: int,
@@ -1364,34 +1235,30 @@ def get_trtllm_moe_sm100_module():
         weight_layout: int = 0,
         enable_pdl: Optional[bool] = None,
     ):
-        seq_len = hidden_states.shape[0]
-        hidden_size = hidden_states.shape[1]
+        seq_len = tuple(hidden_states.shape)[0]
+        hidden_size = tuple(hidden_states.shape)[1]
+        return [paddle.empty(shape=[seq_len, hidden_size], dtype="bfloat16")]
 
-        return [hidden_states.new_empty([seq_len, hidden_size], dtype=torch.bfloat16)]
-
-    @register_custom_op(
-        "flashinfer::trtllm_fp4_block_scale_moe",
-        mutates_args=(""),
-    )
+    @register_custom_op("flashinfer::trtllm_fp4_block_scale_moe", mutates_args="")
     def trtllm_fp4_block_scale_moe_op(
-        routing_logits: Optional[torch.Tensor],
-        topk_ids: Optional[torch.Tensor],
-        expert_weights: Optional[torch.Tensor],
-        routing_bias: Optional[torch.Tensor],
-        hidden_states: torch.Tensor,
-        hidden_states_scale: Optional[torch.Tensor],
-        gemm1_weights: torch.Tensor,
-        gemm1_weights_scale: torch.Tensor,
-        gemm1_bias: Optional[torch.Tensor],
-        gemm1_alpha: Optional[torch.Tensor],
-        gemm1_beta: Optional[torch.Tensor],
-        gemm1_clamp_limit: Optional[torch.Tensor],
-        gemm2_weights: torch.Tensor,
-        gemm2_weights_scale: torch.Tensor,
-        gemm2_bias: Optional[torch.Tensor],
-        output1_scale_scalar: Optional[torch.Tensor],
-        output1_scale_gate_scalar: Optional[torch.Tensor],
-        output2_scale_scalar: Optional[torch.Tensor],
+        routing_logits: Optional[paddle.Tensor],
+        topk_ids: Optional[paddle.Tensor],
+        expert_weights: Optional[paddle.Tensor],
+        routing_bias: Optional[paddle.Tensor],
+        hidden_states: paddle.Tensor,
+        hidden_states_scale: Optional[paddle.Tensor],
+        gemm1_weights: paddle.Tensor,
+        gemm1_weights_scale: paddle.Tensor,
+        gemm1_bias: Optional[paddle.Tensor],
+        gemm1_alpha: Optional[paddle.Tensor],
+        gemm1_beta: Optional[paddle.Tensor],
+        gemm1_clamp_limit: Optional[paddle.Tensor],
+        gemm2_weights: paddle.Tensor,
+        gemm2_weights_scale: paddle.Tensor,
+        gemm2_bias: Optional[paddle.Tensor],
+        output1_scale_scalar: Optional[paddle.Tensor],
+        output1_scale_gate_scalar: Optional[paddle.Tensor],
+        output2_scale_scalar: Optional[paddle.Tensor],
         num_experts: int,
         top_k: int,
         n_group: Optional[int],
@@ -1405,41 +1272,31 @@ def get_trtllm_moe_sm100_module():
         do_finalize: bool,
         enable_pdl: Optional[bool] = None,
         gated_act_type: int = 0,
-        output: Optional[torch.Tensor] = None,
+        output: Optional[paddle.Tensor] = None,
         tune_max_num_tokens: int = 1024,
-    ) -> List[torch.Tensor]:
+    ) -> List[paddle.Tensor]:
         if routing_logits is None:
-            assert topk_ids is not None, (
-                "either topk_ids or routing_logits must be provided."
-            )
-            assert topk_ids.dtype == torch.int32, "topk_ids must be an int32 tensor."
-            routing_dtype = torch.bfloat16
+            assert (
+                topk_ids is not None
+            ), "either topk_ids or routing_logits must be provided."
+            assert topk_ids.dtype == "int32", "topk_ids must be an int32 tensor."
+            routing_dtype = "bfloat16"
         else:
             routing_dtype = routing_logits.dtype
-        hidden_size = hidden_states.shape[-1]
-        if hidden_states.dtype == torch.uint8:
+        hidden_size = tuple(hidden_states.shape)[-1]
+        if hidden_states.dtype == "uint8":
             hidden_size = hidden_size * 2
-        num_tokens = hidden_states.shape[0]
-
-        # workspace buffers required by trtllm-gen
+        num_tokens = tuple(hidden_states.shape)[0]
         if topk_ids is None:
-            topk_ids = torch.empty(
-                num_tokens, top_k, dtype=torch.int32, device=hidden_states.device
-            )
+            topk_ids = paddle.empty(shape=[num_tokens, top_k], dtype="int32")
         if expert_weights is None:
-            expert_weights = torch.empty(
-                num_tokens, top_k, dtype=routing_dtype, device=hidden_states.device
+            expert_weights = paddle.empty(
+                shape=[num_tokens, top_k], dtype=routing_dtype
             )
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(hidden_states.device)
+            enable_pdl = device_support_pdl(hidden_states.place)
         if output is None:
-            output = torch.empty(
-                num_tokens,
-                hidden_size,
-                dtype=torch.bfloat16,
-                device=hidden_states.device,
-            )
-
+            output = paddle.empty(shape=[num_tokens, hidden_size], dtype="bfloat16")
         tuner = AutoTuner.get()
         MoERunner.refine_tuning_config(tune_max_num_tokens)
         dtype_act = deduce_trtllm_gen_tensor_dtype(hidden_states, hidden_states_scale)
@@ -1455,25 +1312,15 @@ def get_trtllm_moe_sm100_module():
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
             gated_act_type=gated_act_type,
-            # NOTE(siyuan): do not fix the tile_tokens_dim to let tunnable runner decide the tile_tokens_dim itself.
-            # however, when the user chooses a different heuristic for tile_tokens_dim, the autotuner will fail to find the correct cached tactics.
-            # tile_tokens_dim=tile_tokens_dim,
         )
         tunning_config = (
             MoERunner.tuning_config_no_hidden_states_scales
             if hidden_states_scale is None
             else MoERunner.tuning_config_with_hidden_states_scales
         )
-        inputs = [
-            output,
-            routing_logits,
-            topk_ids,
-            expert_weights,
-            hidden_states,
-        ]
+        inputs = [output, routing_logits, topk_ids, expert_weights, hidden_states]
         if hidden_states_scale is not None:
             inputs.append(hidden_states_scale)
-
         _, tactic = tuner.choose_one(
             "flashinfer::trtllm_fp4_block_scale_moe",
             [moe_runner],
@@ -1502,8 +1349,6 @@ def get_trtllm_moe_sm100_module():
             do_finalize=do_finalize,
             gated_act_type=gated_act_type,
         )
-
-        # Call the C++ function for block scale MoE
         output = moe_op.trtllm_fp4_block_scale_moe(
             routing_logits,
             topk_ids,
@@ -1539,29 +1384,28 @@ def get_trtllm_moe_sm100_module():
             output,
             tactic,
         )
-
         return output
 
     @register_fake_op("flashinfer::trtllm_fp4_block_scale_moe")
     def _fake_trtllm_fp4_block_scale_moe(
-        routing_logits: torch.Tensor,
-        topk_ids: Optional[torch.Tensor],
-        expert_weights: Optional[torch.Tensor],
-        routing_bias: Optional[torch.Tensor],
-        hidden_states: torch.Tensor,
-        hidden_states_scale: torch.Tensor,
-        gemm1_weights: torch.Tensor,
-        gemm1_weights_scale: torch.Tensor,
-        gemm1_bias: Optional[torch.Tensor],
-        gemm1_alpha: Optional[torch.Tensor],
-        gemm1_beta: Optional[torch.Tensor],
-        gemm1_clamp_limit: Optional[torch.Tensor],
-        gemm2_weights: torch.Tensor,
-        gemm2_weights_scale: torch.Tensor,
-        gemm2_bias: Optional[torch.Tensor],
-        output1_scale_scalar: Optional[torch.Tensor],
-        output1_scale_gate_scalar: Optional[torch.Tensor],
-        output2_scale_scalar: Optional[torch.Tensor],
+        routing_logits: paddle.Tensor,
+        topk_ids: Optional[paddle.Tensor],
+        expert_weights: Optional[paddle.Tensor],
+        routing_bias: Optional[paddle.Tensor],
+        hidden_states: paddle.Tensor,
+        hidden_states_scale: paddle.Tensor,
+        gemm1_weights: paddle.Tensor,
+        gemm1_weights_scale: paddle.Tensor,
+        gemm1_bias: Optional[paddle.Tensor],
+        gemm1_alpha: Optional[paddle.Tensor],
+        gemm1_beta: Optional[paddle.Tensor],
+        gemm1_clamp_limit: Optional[paddle.Tensor],
+        gemm2_weights: paddle.Tensor,
+        gemm2_weights_scale: paddle.Tensor,
+        gemm2_bias: Optional[paddle.Tensor],
+        output1_scale_scalar: Optional[paddle.Tensor],
+        output1_scale_gate_scalar: Optional[paddle.Tensor],
+        output2_scale_scalar: Optional[paddle.Tensor],
         num_experts: int,
         top_k: int,
         n_group: Optional[int],
@@ -1575,13 +1419,12 @@ def get_trtllm_moe_sm100_module():
         do_finalize: bool,
         enable_pdl: bool,
         gated_act_type: int,
-        output: Optional[torch.Tensor],
+        output: Optional[paddle.Tensor],
         tune_max_num_tokens: int,
     ):
-        seq_len = hidden_states.shape[0]
-        hidden_size = hidden_states.shape[1]
-
-        return [hidden_states.new_empty([seq_len, hidden_size], dtype=torch.bfloat16)]
+        seq_len = tuple(hidden_states.shape)[0]
+        hidden_size = tuple(hidden_states.shape)[1]
+        return [paddle.empty(shape=[seq_len, hidden_size], dtype="bfloat16")]
 
     return SimpleNamespace(
         trtllm_fp8_per_tensor_scale_moe=trtllm_fp8_per_tensor_scale_moe_op,
@@ -1591,14 +1434,14 @@ def get_trtllm_moe_sm100_module():
 
 
 def trtllm_fp8_per_tensor_scale_moe(
-    routing_logits: torch.Tensor,
-    routing_bias: Optional[torch.Tensor],
-    hidden_states: torch.Tensor,
-    gemm1_weights: torch.Tensor,
-    output1_scales_scalar: torch.Tensor,
-    output1_scales_gate_scalar: torch.Tensor,
-    gemm2_weights: torch.Tensor,
-    output2_scales_scalar: torch.Tensor,
+    routing_logits: paddle.Tensor,
+    routing_bias: Optional[paddle.Tensor],
+    hidden_states: paddle.Tensor,
+    gemm1_weights: paddle.Tensor,
+    output1_scales_scalar: paddle.Tensor,
+    output1_scales_gate_scalar: paddle.Tensor,
+    gemm2_weights: paddle.Tensor,
+    output2_scales_scalar: paddle.Tensor,
     num_experts: int,
     top_k: int,
     n_group: int,
@@ -1611,7 +1454,7 @@ def trtllm_fp8_per_tensor_scale_moe(
     tile_tokens_dim: int = 8,
     routing_method_type: int = 0,
     enable_pdl: Optional[bool] = None,
-) -> torch.Tensor:
+) -> paddle.Tensor:
     """FP8 per tensor scale MoE operation.
 
     Args:
@@ -1664,14 +1507,14 @@ def trtllm_fp8_per_tensor_scale_moe(
 
 
 def trtllm_fp8_block_scale_moe(
-    routing_logits: torch.Tensor,
-    routing_bias: Optional[torch.Tensor],
-    hidden_states: torch.Tensor,
-    hidden_states_scale: torch.Tensor,
-    gemm1_weights: torch.Tensor,
-    gemm1_weights_scale: torch.Tensor,
-    gemm2_weights: torch.Tensor,
-    gemm2_weights_scale: torch.Tensor,
+    routing_logits: paddle.Tensor,
+    routing_bias: Optional[paddle.Tensor],
+    hidden_states: paddle.Tensor,
+    hidden_states_scale: paddle.Tensor,
+    gemm1_weights: paddle.Tensor,
+    gemm1_weights_scale: paddle.Tensor,
+    gemm2_weights: paddle.Tensor,
+    gemm2_weights_scale: paddle.Tensor,
     num_experts: int,
     top_k: int,
     n_group: int,
@@ -1685,7 +1528,7 @@ def trtllm_fp8_block_scale_moe(
     use_shuffled_weight: bool = False,
     weight_layout: int = 0,
     enable_pdl: Optional[bool] = None,
-) -> torch.Tensor:
+) -> paddle.Tensor:
     """FP8 block scale MoE operation.
 
     Args:
@@ -1737,22 +1580,22 @@ def trtllm_fp8_block_scale_moe(
 
 
 def trtllm_fp4_block_scale_moe(
-    routing_logits: torch.Tensor,
-    routing_bias: Optional[torch.Tensor],
-    hidden_states: torch.Tensor,
-    hidden_states_scale: Optional[torch.Tensor],
-    gemm1_weights: torch.Tensor,
-    gemm1_weights_scale: torch.Tensor,
-    gemm1_bias: Optional[torch.Tensor],
-    gemm1_alpha: Optional[torch.Tensor],
-    gemm1_beta: Optional[torch.Tensor],
-    gemm1_clamp_limit: Optional[torch.Tensor],
-    gemm2_weights: torch.Tensor,
-    gemm2_weights_scale: torch.Tensor,
-    gemm2_bias: Optional[torch.Tensor],
-    output1_scale_scalar: Optional[torch.Tensor],
-    output1_scale_gate_scalar: Optional[torch.Tensor],
-    output2_scale_scalar: Optional[torch.Tensor],
+    routing_logits: paddle.Tensor,
+    routing_bias: Optional[paddle.Tensor],
+    hidden_states: paddle.Tensor,
+    hidden_states_scale: Optional[paddle.Tensor],
+    gemm1_weights: paddle.Tensor,
+    gemm1_weights_scale: paddle.Tensor,
+    gemm1_bias: Optional[paddle.Tensor],
+    gemm1_alpha: Optional[paddle.Tensor],
+    gemm1_beta: Optional[paddle.Tensor],
+    gemm1_clamp_limit: Optional[paddle.Tensor],
+    gemm2_weights: paddle.Tensor,
+    gemm2_weights_scale: paddle.Tensor,
+    gemm2_bias: Optional[paddle.Tensor],
+    output1_scale_scalar: Optional[paddle.Tensor],
+    output1_scale_gate_scalar: Optional[paddle.Tensor],
+    output2_scale_scalar: Optional[paddle.Tensor],
     num_experts: int,
     top_k: int,
     n_group: Optional[int],
@@ -1766,9 +1609,9 @@ def trtllm_fp4_block_scale_moe(
     do_finalize: bool = True,
     enable_pdl: Optional[bool] = None,
     gated_act_type: int = 0,
-    output: Optional[torch.Tensor] = None,
+    output: Optional[paddle.Tensor] = None,
     tune_max_num_tokens: int = 1024,
-) -> List[torch.Tensor]:
+) -> List[paddle.Tensor]:
     """FP4 block scale MoE operation.
 
     Args:
@@ -1869,22 +1712,22 @@ def trtllm_fp4_block_scale_moe(
 
 
 def trtllm_fp4_block_scale_routed_moe(
-    topk_ids: torch.Tensor,
-    routing_bias: Optional[torch.Tensor],
-    hidden_states: torch.Tensor,
-    hidden_states_scale: Optional[torch.Tensor],
-    gemm1_weights: torch.Tensor,
-    gemm1_weights_scale: torch.Tensor,
-    gemm1_bias: Optional[torch.Tensor],
-    gemm1_alpha: Optional[torch.Tensor],
-    gemm1_beta: Optional[torch.Tensor],
-    gemm1_clamp_limit: Optional[torch.Tensor],
-    gemm2_weights: torch.Tensor,
-    gemm2_weights_scale: torch.Tensor,
-    gemm2_bias: Optional[torch.Tensor],
-    output1_scale_scalar: Optional[torch.Tensor],
-    output1_scale_gate_scalar: Optional[torch.Tensor],
-    output2_scale_scalar: Optional[torch.Tensor],
+    topk_ids: paddle.Tensor,
+    routing_bias: Optional[paddle.Tensor],
+    hidden_states: paddle.Tensor,
+    hidden_states_scale: Optional[paddle.Tensor],
+    gemm1_weights: paddle.Tensor,
+    gemm1_weights_scale: paddle.Tensor,
+    gemm1_bias: Optional[paddle.Tensor],
+    gemm1_alpha: Optional[paddle.Tensor],
+    gemm1_beta: Optional[paddle.Tensor],
+    gemm1_clamp_limit: Optional[paddle.Tensor],
+    gemm2_weights: paddle.Tensor,
+    gemm2_weights_scale: paddle.Tensor,
+    gemm2_bias: Optional[paddle.Tensor],
+    output1_scale_scalar: Optional[paddle.Tensor],
+    output1_scale_gate_scalar: Optional[paddle.Tensor],
+    output2_scale_scalar: Optional[paddle.Tensor],
     num_experts: int,
     top_k: int,
     n_group: Optional[int],
@@ -1898,9 +1741,9 @@ def trtllm_fp4_block_scale_routed_moe(
     do_finalize: bool = True,
     enable_pdl: Optional[bool] = None,
     gated_act_type: int = 0,
-    output: Optional[torch.Tensor] = None,
+    output: Optional[paddle.Tensor] = None,
     tune_max_num_tokens: int = 1024,
-) -> List[torch.Tensor]:
+) -> List[paddle.Tensor]:
     """FP4 block scale MoE operation.
 
     Args:

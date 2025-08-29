@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,11 +19,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import functools
+import importlib.util
 
 import cutlass
-import torch
-import importlib.util
-import functools
 
 
 def is_cute_dsl_available() -> bool:
@@ -45,25 +50,24 @@ def cutlass_to_torch_dtype(cutlass_dtype):
     Return the corresponding torch.dtype per the given DSL type
     """
     torch_dtype = getattr(torch, cutlass_dtype.__name__.lower(), None)
-
     torch_type_map = {
-        cutlass.TFloat32: torch.float32,
-        cutlass.Float32: torch.float32,
-        cutlass.Float16: torch.float16,
-        cutlass.BFloat16: torch.bfloat16,
-        cutlass.Float8E5M2: torch.float8_e5m2,
-        cutlass.Float8E4M3FN: torch.float8_e4m3fn,
-        cutlass.Float8E4M3B11FNUZ: torch.float8_e4m3fnuz,
+        cutlass.TFloat32: "float32",
+        cutlass.Float32: "float32",
+        cutlass.Float16: "float16",
+        cutlass.BFloat16: "bfloat16",
+>>>>>>        cutlass.Float8E5M2: torch.float8_e5m2,
+>>>>>>        cutlass.Float8E4M3FN: torch.float8_e4m3fn,
+>>>>>>        cutlass.Float8E4M3B11FNUZ: torch.float8_e4m3fnuz,
     }
     if torch_dtype is None:
         torch_dtype = torch_type_map.get(cutlass_dtype)
-
     if torch_dtype is None:
         raise TypeError(f"{cutlass_dtype} is not supported by torch")
     return torch_dtype
 
 
 @functools.cache
-def get_num_sm(device: torch.device) -> int:
-    # get the compute capability of the device, which would be cached
-    return torch.cuda.get_device_properties(device).multi_processor_count
+def get_num_sm(device: str) -> int:
+    return paddle.device.cuda.get_device_properties(
+        device=device2str(device)
+    ).multi_processor_count

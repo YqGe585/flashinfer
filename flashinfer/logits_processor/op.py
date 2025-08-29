@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
@@ -37,8 +36,7 @@ class Op(ABC):
     def _validate_input_type(self, tensor: TaggedTensor) -> TensorType:
         if tensor.type != self.IN:
             raise ValueError(
-                f"Operator {self.__class__.__name__} cannot accept input type {tensor.type}. "
-                f"Expected: {self.IN}"
+                f"Operator {self.__class__.__name__} cannot accept input type {tensor.type}. Expected: {self.IN}"
             )
         return self.OUT
 

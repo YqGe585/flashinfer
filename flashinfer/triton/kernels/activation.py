@@ -1,5 +1,5 @@
-import triton  # type: ignore[import]
-import triton.language as tl  # type: ignore[import]
+import triton
+import triton.language as tl
 
 from flashinfer.triton.kernels.quant import scale_and_clamp
 
@@ -37,28 +37,20 @@ def silu_and_mul_kernel(
 
     If scales are provided, the input and output tensors are scaled.
     """
-
     i = tl.program_id(axis=0).to(tl.int64)
     j = tl.program_id(axis=1)
-
     o_row_ptr = o_ptr + o_stride * i
     x_row_ptr = x_ptr + x_stride * i
-
     offsets = j * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < d
-
     a = tl.load(x_row_ptr + offsets, mask=mask).to(tl.float32)
     b = tl.load(x_row_ptr + offsets + d, mask=mask).to(tl.float32)
-
     if HAS_X_SCALE:
         x_scale = tl.load(x_scale_ptr)
         a *= x_scale
         b *= x_scale
-
     result = tl.sigmoid(a) * a * b
-
     if HAS_O_SCALE:
         o_scale = tl.load(o_scale_ptr)
         result = scale_and_clamp(result, o_scale, o_ptr.dtype.element_ty)
-
     tl.store(o_row_ptr + offsets, result, mask=mask)

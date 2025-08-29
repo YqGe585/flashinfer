@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,11 +15,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import pytest
-import torch
 from alibi_reference import alibi_attention
-from jit_utils import gen_decode_attention_modules, gen_prefill_attention_modules
+from jit_utils import (gen_decode_attention_modules,
+                       gen_prefill_attention_modules)
 
 import flashinfer
 
@@ -26,21 +27,10 @@ import flashinfer
 def warmup_jit():
     flashinfer.jit.build_jit_specs(
         gen_decode_attention_modules(
-            [torch.float16],  # q_dtypes
-            [torch.float16],  # kv_dtypes
-            [128, 256],  # head_dims
-            [0, 2],  # pos_encoding_modes
-            [False],  # use_sliding_windows
-            [False],  # use_logits_soft_caps
+            ["float16"], ["float16"], [128, 256], [0, 2], [False], [False]
         )
         + gen_prefill_attention_modules(
-            [torch.float16],  # q_dtypes
-            [torch.float16],  # kv_dtypes
-            [128, 256],  # head_dims
-            [0, 2],  # pos_encoding_modes
-            [False],  # use_sliding_windows
-            [False],  # use_logits_soft_caps
-            [False],  # use_fp16_qk_reductions
+            ["float16"], ["float16"], [128, 256], [0, 2], [False], [False], [False]
         ),
         verbose=False,
     )
@@ -50,19 +40,14 @@ def warmup_jit():
 @pytest.mark.parametrize("seq_len", [1, 9, 81, 729])
 @pytest.mark.parametrize("num_heads", [4, 8, 32])
 @pytest.mark.parametrize("head_dim", [128, 256])
-def test_single_decode_alibi(
-    seq_len,
-    num_heads,
-    head_dim,
-):
-    q = torch.randn(num_heads, head_dim, device="cuda:0", dtype=torch.float16)
-    k = torch.randn(seq_len, num_heads, head_dim, device="cuda:0", dtype=torch.float16)
-    v = torch.randn(seq_len, num_heads, head_dim, device="cuda:0", dtype=torch.float16)
-
+def test_single_decode_alibi(seq_len, num_heads, head_dim):
+    q = paddle.randn(shape=[num_heads, head_dim], dtype="float16")
+    k = paddle.randn(shape=[seq_len, num_heads, head_dim], dtype="float16")
+    v = paddle.randn(shape=[seq_len, num_heads, head_dim], dtype="float16")
     o = flashinfer.single_decode_with_kv_cache(q, k, v, pos_encoding_mode="ALIBI")
-    mask = torch.ones(1, seq_len, dtype=torch.bool, device="cuda:0")
-    o_ref = alibi_attention(q.unsqueeze(0), k, v, mask).squeeze(0)
-    torch.testing.assert_close(o, o_ref, rtol=1e-3, atol=1e-3)
+    mask = paddle.ones(shape=[1, seq_len], dtype="bool")
+    o_ref = alibi_attention(q.unsqueeze(axis=0), k, v, mask).squeeze(0)
+    assert paddle.allclose(x=o, y=o_ref, rtol=0.001, atol=0.001).item(), ""
 
 
 @pytest.mark.parametrize("q_len", [1, 17, 81, 987])
@@ -70,27 +55,20 @@ def test_single_decode_alibi(
 @pytest.mark.parametrize("num_heads", [4, 8, 32])
 @pytest.mark.parametrize("head_dim", [128, 256])
 @pytest.mark.parametrize("causal", [False, True])
-def test_single_prefill_alibi(
-    q_len,
-    kv_len,
-    num_heads,
-    head_dim,
-    causal,
-):
+def test_single_prefill_alibi(q_len, kv_len, num_heads, head_dim, causal):
     if causal and q_len > kv_len:
         pytest.skip("Causal attention requires q_len <= kv_len")
-    q = torch.randn(q_len, num_heads, head_dim, device="cuda:0", dtype=torch.float16)
-    k = torch.randn(kv_len, num_heads, head_dim, device="cuda:0", dtype=torch.float16)
-    v = torch.randn(kv_len, num_heads, head_dim, device="cuda:0", dtype=torch.float16)
-
+    q = paddle.randn(shape=[q_len, num_heads, head_dim], dtype="float16")
+    k = paddle.randn(shape=[kv_len, num_heads, head_dim], dtype="float16")
+    v = paddle.randn(shape=[kv_len, num_heads, head_dim], dtype="float16")
     o = flashinfer.single_prefill_with_kv_cache(
         q, k, v, causal=causal, pos_encoding_mode="ALIBI"
     )
-    mask = torch.ones(q_len, kv_len, dtype=torch.bool, device="cuda:0")
+    mask = paddle.ones(shape=[q_len, kv_len], dtype="bool")
     if causal:
-        mask = torch.tril(mask, diagonal=kv_len - q_len)
+        mask = paddle.tril(x=mask, diagonal=kv_len - q_len)
     o_ref = alibi_attention(q, k, v, mask)
-    torch.testing.assert_close(o, o_ref, rtol=1e-2, atol=1e-2)
+    assert paddle.allclose(x=o, y=o_ref, rtol=0.01, atol=0.01).item(), ""
 
 
 if __name__ == "__main__":

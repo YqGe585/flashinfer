@@ -1,15 +1,19 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import os
+
+import paddle
+from paddle_utils import *
+
 """
 MNNVL (Multi-Node NVLink) communication operations for FlashInfer.
 
 """
-
 import functools
 import math
-import os
 from types import SimpleNamespace
 from typing import Optional, Tuple
-
-import torch
 
 from flashinfer.comm.mapping import Mapping
 
@@ -29,10 +33,7 @@ def mpi_barrier():
 
 def gen_trtllm_mnnvl_comm_module() -> JitSpec:
     return gen_jit_spec(
-        "trtllm_mnnvl_comm",
-        [
-            jit_env.FLASHINFER_CSRC_DIR / "trtllm_mnnvl_allreduce.cu",
-        ],
+        "trtllm_mnnvl_comm", [jit_env.FLASHINFER_CSRC_DIR / "trtllm_mnnvl_allreduce.cu"]
     )
 
 
@@ -56,16 +57,16 @@ def get_trtllm_mnnvl_comm_module():
         ],
     )
     def trtllm_mnnvl_all_reduce(
-        inp: torch.Tensor,
-        multicast_buffer_ptr: int,  # Pointer address as integer
-        buffer_ptrs_dev: int,  # Pointer address as integer
-        buffer_mnnvl: torch.Tensor,
-        buffer_flags_mnnvl: torch.Tensor,
+        inp: paddle.Tensor,
+        multicast_buffer_ptr: int,
+        buffer_ptrs_dev: int,
+        buffer_mnnvl: paddle.Tensor,
+        buffer_flags_mnnvl: paddle.Tensor,
         nranks: int,
         rank: int,
         wait_for_results: bool,
         launch_with_pdl: bool,
-        out: Optional[torch.Tensor],
+        out: Optional[paddle.Tensor],
     ) -> None:
         module.trtllm_mnnvl_all_reduce(
             inp,
@@ -95,12 +96,12 @@ def get_trtllm_mnnvl_comm_module():
     )
     def trtllm_mnnvl_rmsnorm(
         mcast_buffer_input: int,
-        prenorm_output: torch.Tensor,
-        normed_output: torch.Tensor,
-        gamma: torch.Tensor,
+        prenorm_output: paddle.Tensor,
+        normed_output: paddle.Tensor,
+        gamma: paddle.Tensor,
         epsilon: float,
-        residual: torch.Tensor,
-        buffer_flags: torch.Tensor,
+        residual: paddle.Tensor,
+        buffer_flags: paddle.Tensor,
         launch_with_pdl: bool,
     ) -> None:
         """Performs MNNVL TwoShot RMSNorm on the communication buffer.
@@ -133,8 +134,8 @@ def get_trtllm_mnnvl_comm_module():
 
 
 def get_allreduce_mnnvl_workspace(
-    mapping: Mapping, dtype: torch.dtype
-) -> Tuple[McastGPUBuffer, torch.Tensor, int]:
+    mapping: Mapping, dtype: paddle.dtype
+) -> Tuple[McastGPUBuffer, paddle.Tensor, int]:
     """Get workspace buffers needed for multi-node NVLink all-reduce operation.
 
     This function allocates and initializes the workspace buffers required for performing
@@ -157,59 +158,42 @@ def get_allreduce_mnnvl_workspace(
         - int: Maximum number of elements that can fit in buffer
     """
     force_mn = os.environ.get("TRTLLM_FORCE_MNNVL_AR", "0") == "1"
-
-    # buffer shape: [3, 2, buffer_tokens, hidden_dim]
-    stride = 3 * 2 * dtype.itemsize
-    # LCM for hidden_dim: 2048, 4096, 5120, 7168, 8192 = 286720
-    # max_num_elements must be a multiple of 286720
+    stride = 3 * 2 * dtype.element_size()
     lcm_hidden_dim = 286720
-    TARGET_WORKSPACE_SIZE_BYTES = 12_000_000
+    TARGET_WORKSPACE_SIZE_BYTES = 12000000
     buffer_size_in_bytes = math.ceil(
         TARGET_WORKSPACE_SIZE_BYTES / (lcm_hidden_dim * stride)
     ) * (lcm_hidden_dim * stride)
     max_num_elements = buffer_size_in_bytes // stride
-
     mcast_buffer = McastGPUBuffer(
         buffer_size_in_bytes,
         mapping.tp_size,
         mapping.tp_rank,
-        torch.device("cuda", mapping.local_rank),
+        device2str("cuda", mapping.local_rank),
         mapping.is_multi_node() or force_mn,
     )
-
-    # Initialize the unicast buffer with -0.0
     mcast_buffer.lamport_initialize(mapping.tp_rank, dtype)
-
-    # CPU barrier since we assume this should not be called in cuda graph
-    torch.cuda.synchronize()
+    paddle.device.synchronize()
     mpi_barrier()
-
-    # This is a buffer to maintain the state of this allreduce Op
-    # [Buffer_ptr, Clear_ptr, Buffer_size, num_tokens_prev, atomic access counter]
-    buffer_flags = torch.tensor(
-        [0, 2, max_num_elements, 0, 0],
-        dtype=torch.uint32,
-        device=torch.device("cuda", mapping.local_rank),
+    buffer_flags = paddle.to_tensor(
+        data=[0, 2, max_num_elements, 0, 0],
+>>>>>>        dtype=torch.uint32,
+        place=device2str("gpu", mapping.local_rank),
     )
-
-    return (
-        mcast_buffer,
-        buffer_flags,
-        max_num_elements,
-    )
+    return mcast_buffer, buffer_flags, max_num_elements
 
 
 def trtllm_mnnvl_all_reduce(
-    inp: torch.Tensor,
-    multicast_buffer_ptr: int,  # Pointer address as integer
-    buffer_ptrs_dev: int,  # Pointer address as integer
+    inp: paddle.Tensor,
+    multicast_buffer_ptr: int,
+    buffer_ptrs_dev: int,
     buffer_M: int,
-    buffer_flags_mnnvl: torch.Tensor,
+    buffer_flags_mnnvl: paddle.Tensor,
     nranks: int,
     rank: int,
     wait_for_results: bool,
     launch_with_pdl: bool,
-    out: Optional[torch.Tensor] = None,
+    out: Optional[paddle.Tensor] = None,
 ) -> None:
     """Perform a multi-node NVLink all-reduce operation across multiple GPUs.
 
@@ -250,19 +234,19 @@ def trtllm_mnnvl_all_reduce(
 
 
 def trtllm_mnnvl_fused_allreduce_rmsnorm(
-    prenorm_output: torch.Tensor,
-    normed_output: torch.Tensor,
-    shard_input: torch.Tensor,
-    multicast_buffer_ptr: int,  # Pointer address as integer
-    buffer_ptrs_dev: int,  # Pointer address as integer
-    unicast_ptr: int,  # Local unicast buffer pointer
+    prenorm_output: paddle.Tensor,
+    normed_output: paddle.Tensor,
+    shard_input: paddle.Tensor,
+    multicast_buffer_ptr: int,
+    buffer_ptrs_dev: int,
+    unicast_ptr: int,
     buffer_M: int,
-    buffer_flags_mnnvl: torch.Tensor,
+    buffer_flags_mnnvl: paddle.Tensor,
     nranks: int,
     rank: int,
-    gamma: torch.Tensor,
+    gamma: paddle.Tensor,
     epsilon: float,
-    residual: torch.Tensor,
+    residual: paddle.Tensor,
     launch_with_pdl: bool,
 ) -> None:
     """Performs MNNVL TwoShot Allreduce + RMSNorm.
@@ -288,7 +272,6 @@ def trtllm_mnnvl_fused_allreduce_rmsnorm(
         launch_with_pdl: Whether to launch with PDL
 
     """
-    # allreduce_result = Σ(shard_input across all ranks)
     trtllm_mnnvl_all_reduce(
         shard_input,
         multicast_buffer_ptr,
@@ -297,14 +280,10 @@ def trtllm_mnnvl_fused_allreduce_rmsnorm(
         buffer_flags_mnnvl,
         nranks,
         rank,
-        False,  # No need to wait to write AR results here as we are not writing them
+        False,
         launch_with_pdl,
-        None,  # out parameter - None since wait_for_results=False
+        None,
     )
-
-    # prenorm_output = AllReduce(shard_input) + residual
-    # rms = sqrt(mean(prenorm_output²) + epsilon)
-    # normed_output = (prenorm_output / rms) * gamma
     get_trtllm_mnnvl_comm_module().trtllm_mnnvl_rmsnorm(
         unicast_ptr,
         prenorm_output,

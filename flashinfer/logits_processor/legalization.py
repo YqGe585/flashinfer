@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from typing import List
 
 from .op import Op
@@ -45,56 +44,41 @@ def legalize_processors(
     """
     if not processors:
         raise LegalizationError("Cannot legalize empty processor list")
-
     ops = []
     current_type = initial_type
-
     for i, processor in enumerate(processors):
         try:
             legalized_ops = processor.legalize(current_type)
-
             if not legalized_ops:
                 raise LegalizationError(
                     f"Processor {processor.__class__.__name__} produced no ops"
                 )
-
             ops.extend(legalized_ops)
-
             current_type = legalized_ops[-1].OUT
-
         except Exception as e:
             raise LegalizationError(
                 f"Failed to legalize processor {i} ({processor.__class__.__name__}): {e}"
             ) from e
-
     return ops
 
 
 def infer_initial_type(processors: List[LogitsProcessor]) -> TensorType:
     if not processors:
         return TensorType.LOGITS
-
     first_processor = processors[0]
     valid_types = _get_supported_types(first_processor)
-
     if len(valid_types) > 1:
         raise LegalizationError(
-            f"Cannot infer input type: {first_processor.__class__.__name__} can accept both LOGITS and PROBS. "
-            f"Please specify input_type explicitly when creating the LogitsPipe."
+            f"Cannot infer input type: {first_processor.__class__.__name__} can accept both LOGITS and PROBS. Please specify input_type explicitly when creating the LogitsPipe."
         )
-
     if len(valid_types) == 1:
         return valid_types[0]
-
     raise LegalizationError(
-        f"Processor {first_processor.__class__.__name__} cannot accept standard pipeline inputs "
-        f"(LOGITS or PROBS)"
+        f"Processor {first_processor.__class__.__name__} cannot accept standard pipeline inputs (LOGITS or PROBS)"
     )
 
 
-def _get_supported_types(
-    processor: LogitsProcessor,
-) -> List[TensorType]:
+def _get_supported_types(processor: LogitsProcessor) -> List[TensorType]:
     valid_types = []
     for tensor_type in [TensorType.LOGITS, TensorType.PROBS]:
         try:
@@ -102,16 +86,13 @@ def _get_supported_types(
             valid_types.append(tensor_type)
         except (ValueError, LegalizationError):
             continue
-
     return valid_types
 
 
 def validate_processor_chain(processors: List[LogitsProcessor]) -> None:
     if not processors:
         raise LegalizationError("Processor chain cannot be empty")
-
     initial_type = infer_initial_type(processors)
-
     try:
         legalize_processors(processors, initial_type)
     except LegalizationError:

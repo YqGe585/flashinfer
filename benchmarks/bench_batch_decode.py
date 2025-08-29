@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,9 +15,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import numpy as np
-import torch
 
 import flashinfer
 from flashinfer.testing.utils import bench_gpu_time
@@ -37,27 +37,26 @@ def bench_batch_decode(
     kv_dtype,
 ):
     np.random.seed(42)
-    seq_lens = torch.full((batch_size,), seq_len)
-    seq_lens_blocks = torch.ceil(seq_lens / page_block_size).int()
-    kv_indptr = torch.cat([torch.tensor([0]), torch.cumsum(seq_lens_blocks, 0)], dim=0)
-    kv_indptr = kv_indptr.int()
-    last_page_len = seq_lens - (seq_lens_blocks - 1) * page_block_size
-    last_page_len = last_page_len.int()
-    num_blocks = kv_indptr[-1].item()
-
-    q = torch.rand(batch_size, num_qo_heads, head_dim, dtype=q_dtype, device="cuda:0")
-    kv_data = torch.randn(
-        num_blocks, 2, page_block_size, num_kv_heads, head_dim, device="cuda:0"
-    ).to(kv_dtype)
-    workspace_buffer = torch.empty(
-        128 * 1024 * 1024, dtype=torch.uint8, device="cuda:0"
+    seq_lens = paddle.full(shape=(batch_size,), fill_value=seq_len)
+    seq_lens_blocks = paddle.ceil(x=seq_lens / page_block_size).astype(dtype="int32")
+    kv_indptr = paddle.concat(
+        x=[paddle.to_tensor(data=[0]), paddle.cumsum(x=seq_lens_blocks, axis=0)], axis=0
     )
+    kv_indptr = kv_indptr.astype(dtype="int32")
+    last_page_len = seq_lens - (seq_lens_blocks - 1) * page_block_size
+    last_page_len = last_page_len.astype(dtype="int32")
+    num_blocks = kv_indptr[-1].item()
+    q = paddle.rand(shape=[batch_size, num_qo_heads, head_dim], dtype=q_dtype)
+    kv_data = paddle.randn(
+        shape=[num_blocks, 2, page_block_size, num_kv_heads, head_dim]
+    ).to(kv_dtype)
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="uint8")
     wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
         workspace_buffer, kv_layout="NHD", use_tensor_cores=True
     )
     wrapper.plan(
         kv_indptr.to(0),
-        torch.arange(num_blocks).int().to(0),
+        paddle.arange(end=num_blocks).astype(dtype="int32").to(0),
         last_page_len.to(0),
         num_qo_heads,
         num_kv_heads,
@@ -66,11 +65,9 @@ def bench_batch_decode(
         data_type=kv_dtype,
         q_data_type=q_dtype,
     )
-
     measurements = bench_gpu_time(lambda: wrapper.run(q, kv_data))
     ms = np.median(measurements)
-
-    io = q.numel() * q.element_size() + kv_data.numel() * kv_data.element_size()
+    io = q.size * q.element_size() + kv_data.size * kv_data.element_size()
     print(
         f"batch_size={batch_size}, seq_len={seq_len}, num_qo_heads={num_qo_heads}, num_kv_heads={num_kv_heads}, head_dim={head_dim}, page_block_size={page_block_size}, q_dtype={q_dtype}, kv_dtype={kv_dtype}"
     )
@@ -79,8 +76,8 @@ def bench_batch_decode(
 
 
 if __name__ == "__main__":
-    for q_dtype in [torch.bfloat16]:
-        for kv_dtype in [torch.bfloat16, torch.float8_e4m3fn]:
+    for q_dtype in ["bfloat16"]:
+>>>>>>        for kv_dtype in ["bfloat16", torch.float8_e4m3fn]:
             for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]:
                 for seq_len in [512, 1024, 2048, 4096, 8192, 16384]:
                     bench_batch_decode(

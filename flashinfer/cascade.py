@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,17 +15,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from typing import List, Optional, Tuple, Union
-
-import torch
 
 from .decode import BatchDecodeWithPagedKVCacheWrapper
 from .jit import JitSpec
 from .jit import env as jit_env
 from .jit import gen_jit_spec
-from .prefill import BatchPrefillWithPagedKVCacheWrapper, single_prefill_with_kv_cache
+from .prefill import (BatchPrefillWithPagedKVCacheWrapper,
+                      single_prefill_with_kv_cache)
 from .utils import register_custom_op, register_fake_op
 
 
@@ -44,9 +44,9 @@ def get_cascade_module():
 
 @register_custom_op("flashinfer::merge_state", mutates_args=())
 def merge_state(
-    v_a: torch.Tensor, s_a: torch.Tensor, v_b: torch.Tensor, s_b: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""Merge the attention output ``V`` and the logsumexp value ``S`` from the two
+    v_a: paddle.Tensor, s_a: paddle.Tensor, v_b: paddle.Tensor, s_b: paddle.Tensor
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    """Merge the attention output ``V`` and the logsumexp value ``S`` from the two
     KV-segments.
     Check :ref:`our tutorial <recursive-attention>` on the mathematical details.
 
@@ -91,32 +91,32 @@ def merge_state(
     >>> s_merged.shape
     torch.Size([2048, 32])
     """
-    s_a = s_a.to(torch.float32)
-    s_b = s_b.to(torch.float32)
-    v_merged = torch.empty_like(v_a)
-    s_merged = torch.empty_like(s_a)
+    s_a = s_a.to("float32")
+    s_b = s_b.to("float32")
+    v_merged = paddle.empty_like(x=v_a)
+    s_merged = paddle.empty_like(x=s_a)
     get_cascade_module().merge_state(v_a, s_a, v_b, s_b, v_merged, s_merged)
     return v_merged, s_merged
 
 
 @register_fake_op("flashinfer::merge_state")
 def _fake_merge_state(
-    v_a: torch.Tensor, s_a: torch.Tensor, v_b: torch.Tensor, s_b: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    v = torch.empty_like(v_a)
-    s = torch.empty_like(s_a)
+    v_a: paddle.Tensor, s_a: paddle.Tensor, v_b: paddle.Tensor, s_b: paddle.Tensor
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    v = paddle.empty_like(x=v_a)
+    s = paddle.empty_like(x=s_a)
     return v, s
 
 
 @register_custom_op("flashinfer::merge_state_in_place", mutates_args=("v", "s"))
 def merge_state_in_place(
-    v: torch.Tensor,
-    s: torch.Tensor,
-    v_other: torch.Tensor,
-    s_other: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
+    v: paddle.Tensor,
+    s: paddle.Tensor,
+    v_other: paddle.Tensor,
+    s_other: paddle.Tensor,
+    mask: Optional[paddle.Tensor] = None,
 ) -> None:
-    r"""Merge the self-attention state ``(v, s)`` with another state
+    """Merge the self-attention state ``(v, s)`` with another state
     ``(v_other, s_other)`` in-place.
 
     Parameters
@@ -152,25 +152,27 @@ def merge_state_in_place(
     >>> s_other = torch.randn(seq_len, num_heads, dtype=torch.float32).to("cuda:0")
     >>> flashinfer.merge_state_in_place(v, s, v_other, s_other)
     """
-    s = s.to(torch.float32)
-    s_other = s_other.to(torch.float32)
+    s = s.to("float32")
+    s_other = s_other.to("float32")
     get_cascade_module().merge_state_in_place(v, s, v_other, s_other, mask)
 
 
 @register_fake_op("flashinfer::merge_state_in_place")
 def _fake_merge_state_in_place(
-    v: torch.Tensor,
-    s: torch.Tensor,
-    v_other: torch.Tensor,
-    s_other: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
+    v: paddle.Tensor,
+    s: paddle.Tensor,
+    v_other: paddle.Tensor,
+    s_other: paddle.Tensor,
+    mask: Optional[paddle.Tensor] = None,
 ) -> None:
     pass
 
 
 @register_custom_op("flashinfer::merge_states", mutates_args=())
-def merge_states(v: torch.Tensor, s: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""Merge multiple attention states (v, s).
+def merge_states(
+    v: paddle.Tensor, s: paddle.Tensor
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    """Merge multiple attention states (v, s).
 
     Parameters
     ----------
@@ -206,27 +208,27 @@ def merge_states(v: torch.Tensor, s: torch.Tensor) -> Tuple[torch.Tensor, torch.
     >>> s_merged.shape
     torch.Size([2048, 32])
     """
-    device = v.device
-    s = s.to(torch.float32)
-    seq_len, _, num_heads, head_dim = v.size()
-    v_merged = torch.empty(seq_len, num_heads, head_dim, dtype=v.dtype, device=device)
-    s_merged = torch.empty(seq_len, num_heads, dtype=torch.float32, device=device)
+    device = v.place
+    s = s.to("float32")
+    seq_len, _, num_heads, head_dim = tuple(v.shape)
+    v_merged = paddle.empty(shape=[seq_len, num_heads, head_dim], dtype=v.dtype)
+    s_merged = paddle.empty(shape=[seq_len, num_heads], dtype="float32")
     get_cascade_module().merge_states(v, s, v_merged, s_merged)
     return v_merged, s_merged
 
 
 @register_fake_op("flashinfer::merge_states")
 def _fake_merge_states(
-    v: torch.Tensor, s: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    seq_len, _, num_heads, head_dim = v.size()
-    v_merged = torch.empty(seq_len, num_heads, head_dim, dtype=v.dtype)
-    s_merged = torch.empty(seq_len, num_heads, dtype=torch.float32)
+    v: paddle.Tensor, s: paddle.Tensor
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    seq_len, _, num_heads, head_dim = tuple(v.shape)
+    v_merged = paddle.empty(shape=[seq_len, num_heads, head_dim], dtype=v.dtype)
+    s_merged = paddle.empty(shape=[seq_len, num_heads], dtype="float32")
     return v_merged, s_merged
 
 
 class MultiLevelCascadeAttentionWrapper:
-    r"""Attention wrapper for memory efficient multi-level cascade inference, this API assumes all
+    """Attention wrapper for memory efficient multi-level cascade inference, this API assumes all
     levels KV-Cache are stored in a unified paged table.
 
     Please check :ref:`cascade-inference-data-layout` for data layout in cascade inference.
@@ -302,15 +304,15 @@ class MultiLevelCascadeAttentionWrapper:
     def __init__(
         self,
         num_levels,
-        float_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
         kv_layout: str = "NHD",
         use_cuda_graph: bool = False,
-        qo_indptr_buf_arr: Optional[List[torch.Tensor]] = None,
-        paged_kv_indptr_buf_arr: Optional[List[torch.Tensor]] = None,
-        paged_kv_indices_buf_arr: Optional[List[torch.Tensor]] = None,
-        paged_kv_last_page_len_buf_arr: Optional[List[torch.Tensor]] = None,
+        qo_indptr_buf_arr: Optional[List[paddle.Tensor]] = None,
+        paged_kv_indptr_buf_arr: Optional[List[paddle.Tensor]] = None,
+        paged_kv_indices_buf_arr: Optional[List[paddle.Tensor]] = None,
+        paged_kv_last_page_len_buf_arr: Optional[List[paddle.Tensor]] = None,
     ) -> None:
-        r"""Constructor of :class:`MultiLevelCascadeAttentionWrapper`.
+        """Constructor of :class:`MultiLevelCascadeAttentionWrapper`.
 
         Parameters
         ----------
@@ -351,12 +353,7 @@ class MultiLevelCascadeAttentionWrapper:
                     paged_kv_indices_buf=paged_kv_indices_buf,
                     paged_kv_last_page_len_buf=paged_kv_last_page_len_buf,
                 )
-                for (
-                    qo_indptr_buf,
-                    paged_kv_indptr_buf,
-                    paged_kv_indices_buf,
-                    paged_kv_last_page_len_buf,
-                ) in zip(
+                for qo_indptr_buf, paged_kv_indptr_buf, paged_kv_indices_buf, paged_kv_last_page_len_buf in zip(
                     qo_indptr_buf_arr,
                     paged_kv_indptr_buf_arr,
                     paged_kv_indices_buf_arr,
@@ -377,10 +374,10 @@ class MultiLevelCascadeAttentionWrapper:
 
     def reset_workspace_buffer(
         self,
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffers: List[torch.Tensor],
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffers: List[paddle.Tensor],
     ) -> None:
-        r"""Reset the workspace buffer.
+        """Reset the workspace buffer.
 
         Parameters
         ----------
@@ -399,10 +396,10 @@ class MultiLevelCascadeAttentionWrapper:
 
     def plan(
         self,
-        qo_indptr_arr: List[torch.Tensor],
-        paged_kv_indptr_arr: List[torch.Tensor],
-        paged_kv_indices_arr: List[torch.Tensor],
-        paged_kv_last_page_len: List[torch.Tensor],
+        qo_indptr_arr: List[paddle.Tensor],
+        paged_kv_indptr_arr: List[paddle.Tensor],
+        paged_kv_indices_arr: List[paddle.Tensor],
+        paged_kv_last_page_len: List[paddle.Tensor],
         num_qo_heads: int,
         num_kv_heads: int,
         head_dim: int,
@@ -416,9 +413,9 @@ class MultiLevelCascadeAttentionWrapper:
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
         q_data_type: str = "float16",
-        kv_data_type: Optional[Union[str, torch.dtype]] = None,
+        kv_data_type: Optional[Union[str, paddle.dtype]] = None,
     ):
-        r"""Create auxiliary data structures for multi-level cascade attention for multiple
+        """Create auxiliary data structures for multi-level cascade attention for multiple
         forward calls within the same decode step. Please check
         :ref:`cascade-inference-data-layout` for data layout in cascade inference.
 
@@ -463,7 +460,7 @@ class MultiLevelCascadeAttentionWrapper:
             The attention logits soft capping value (used in Gemini, Grok and Gemma-2, etc.), if not
             provided, will be set to ``0``. If greater than 0, the logits will be capped according to
             formula:
-            :math:`\texttt{logits_soft_cap} \times \mathrm{tanh}(x / \texttt{logits_soft_cap})`,
+            :math:`\\texttt{logits_soft_cap} \\times \\mathrm{tanh}(x / \\texttt{logits_soft_cap})`,
             where :math:`x` is the input logits.
         sm_scale : Optional[float]
             The scale used in softmax, if not provided, will be set to
@@ -516,12 +513,8 @@ class MultiLevelCascadeAttentionWrapper:
 
     begin_forward = plan
 
-    def run(
-        self,
-        q: torch.Tensor,
-        paged_kv_cache: torch.Tensor,
-    ):
-        r"""Compute multi-level cascade attention.
+    def run(self, q: paddle.Tensor, paged_kv_cache: paddle.Tensor):
+        """Compute multi-level cascade attention.
 
         Parameters
         ----------
@@ -542,21 +535,18 @@ class MultiLevelCascadeAttentionWrapper:
               ``paged_kv_cache[:, 1]`` is the value-cache.
         """
         out, lse = self._batch_prefill_wrappers[-1].run(
-            q,
-            paged_kv_cache,
-            return_lse=True,
+            q, paged_kv_cache, return_lse=True
         )
         for wrapper in self._batch_prefill_wrappers[:-1]:
             out_i, lse_i = wrapper.run(q, paged_kv_cache, return_lse=True)
             merge_state_in_place(out, lse, out_i, lse_i)
-
         return out
 
     forward = run
 
 
 class BatchDecodeWithSharedPrefixPagedKVCacheWrapper:
-    r"""Wrapper class for decode attention with shared-prefix paged kv-cache for batch
+    """Wrapper class for decode attention with shared-prefix paged kv-cache for batch
     of requests. The shared-prefix KV-Cache was stored in a standalone tensors, and the
     unique KV-Cache of each request was stored in a paged KV-Cache data structure.
 
@@ -640,7 +630,7 @@ class BatchDecodeWithSharedPrefixPagedKVCacheWrapper:
     """
 
     def __init__(
-        self, float_workspace_buffer: torch.Tensor, kv_layout: str = "NHD"
+        self, float_workspace_buffer: paddle.Tensor, kv_layout: str = "NHD"
     ) -> None:
         self._batch_decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
             float_workspace_buffer, kv_layout
@@ -648,9 +638,9 @@ class BatchDecodeWithSharedPrefixPagedKVCacheWrapper:
         self._kv_layout = kv_layout
 
     def reset_workspace_buffer(
-        self, float_workspace_buffer: torch.Tensor, int_workspace_buffer
+        self, float_workspace_buffer: paddle.Tensor, int_workspace_buffer
     ) -> None:
-        r"""Reset the workspace buffer.
+        """Reset the workspace buffer.
 
         Parameters
         ----------
@@ -668,16 +658,16 @@ class BatchDecodeWithSharedPrefixPagedKVCacheWrapper:
 
     def begin_forward(
         self,
-        unique_kv_indptr: torch.Tensor,
-        unique_kv_indices: torch.Tensor,
-        unique_kv_last_page_len: torch.Tensor,
+        unique_kv_indptr: paddle.Tensor,
+        unique_kv_indices: paddle.Tensor,
+        unique_kv_last_page_len: paddle.Tensor,
         num_qo_heads: int,
         num_kv_heads: int,
         head_dim: int,
         page_size: int,
         data_type: str = "float16",
     ) -> None:
-        r"""Plan shared-prefix batch decode attention for given problem specification.
+        """Plan shared-prefix batch decode attention for given problem specification.
 
         Parameters
         ----------
@@ -729,12 +719,12 @@ class BatchDecodeWithSharedPrefixPagedKVCacheWrapper:
 
     def forward(
         self,
-        q: torch.Tensor,
-        k_shared: torch.Tensor,
-        v_shared: torch.Tensor,
-        unique_kv_cache: torch.Tensor,
-    ) -> torch.Tensor:
-        r"""Compute batch decode attention between queries and shared-prefix paged
+        q: paddle.Tensor,
+        k_shared: paddle.Tensor,
+        v_shared: paddle.Tensor,
+        unique_kv_cache: paddle.Tensor,
+    ) -> paddle.Tensor:
+        """Compute batch decode attention between queries and shared-prefix paged
         kv-cache.
 
         Parameters
@@ -783,20 +773,18 @@ class BatchDecodeWithSharedPrefixPagedKVCacheWrapper:
             return_lse=True,
         )
         V_unique, S_unique = self._batch_decode_wrapper.forward_return_lse(
-            q,
-            unique_kv_cache,
-            pos_encoding_mode="NONE",
+            q, unique_kv_cache, pos_encoding_mode="NONE"
         )
         merge_state_in_place(V_shared, S_shared, V_unique, S_unique)
         return V_shared
 
     def end_forward(self) -> None:
-        r"""Warning: this function is deprecated and has no effect"""
+        """Warning: this function is deprecated and has no effect"""
         pass
 
 
 class BatchPrefillWithSharedPrefixPagedKVCacheWrapper:
-    r"""Wrapper class for prefill/append attention with shared-prefix paged kv-cache for
+    """Wrapper class for prefill/append attention with shared-prefix paged kv-cache for
     batch of requests.
 
     Check :ref:`our tutorial<kv-layout>` for paged kv-cache layout.
@@ -887,9 +875,9 @@ class BatchPrefillWithSharedPrefixPagedKVCacheWrapper:
     """
 
     def __init__(
-        self, float_workspace_buffer: torch.Tensor, kv_layout: str = "NHD"
+        self, float_workspace_buffer: paddle.Tensor, kv_layout: str = "NHD"
     ) -> None:
-        r"""Constructor of :class:`BatchDecodeWithSharedPrefixPagedKVCacheWrapper`.
+        """Constructor of :class:`BatchDecodeWithSharedPrefixPagedKVCacheWrapper`.
 
         Parameters
         ----------
@@ -906,9 +894,9 @@ class BatchPrefillWithSharedPrefixPagedKVCacheWrapper:
         self._kv_layout = kv_layout
 
     def reset_workspace_buffer(
-        self, float_workspace_buffer: torch.Tensor, int_workspace_buffer: torch.Tensor
+        self, float_workspace_buffer: paddle.Tensor, int_workspace_buffer: paddle.Tensor
     ) -> None:
-        r"""Reset the workspace buffer.
+        """Reset the workspace buffer.
 
         Parameters
         ----------
@@ -926,16 +914,16 @@ class BatchPrefillWithSharedPrefixPagedKVCacheWrapper:
 
     def begin_forward(
         self,
-        qo_indptr: torch.Tensor,
-        paged_kv_indptr: torch.Tensor,
-        paged_kv_indices: torch.Tensor,
-        paged_kv_last_page_len: torch.Tensor,
+        qo_indptr: paddle.Tensor,
+        paged_kv_indptr: paddle.Tensor,
+        paged_kv_indices: paddle.Tensor,
+        paged_kv_last_page_len: paddle.Tensor,
         num_qo_heads: int,
         num_kv_heads: int,
         head_dim: int,
         page_size: int,
     ) -> None:
-        r"""Create auxiliary data structures for shared-prefix batch prefill/append
+        """Create auxiliary data structures for shared-prefix batch prefill/append
         attention for multiple forward calls within the same prefill/append step.
 
         Parameters
@@ -981,17 +969,17 @@ class BatchPrefillWithSharedPrefixPagedKVCacheWrapper:
 
     def forward(
         self,
-        q: torch.Tensor,
-        k_shared: torch.Tensor,
-        v_shared: torch.Tensor,
-        unique_kv_cache: torch.Tensor,
+        q: paddle.Tensor,
+        k_shared: paddle.Tensor,
+        v_shared: paddle.Tensor,
+        unique_kv_cache: paddle.Tensor,
         causal: bool = False,
         use_fp16_qk_reduction: bool = False,
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-    ) -> torch.Tensor:
-        r"""Compute batch prefill/append attention between query and shared-prefix paged
+    ) -> paddle.Tensor:
+        """Compute batch prefill/append attention between query and shared-prefix paged
         kv-cache.
 
         Parameters
@@ -1071,5 +1059,5 @@ class BatchPrefillWithSharedPrefixPagedKVCacheWrapper:
         return V_shared
 
     def end_forward(self) -> None:
-        r"""Warning: this function is deprecated and has no effect"""
+        """Warning: this function is deprecated and has no effect"""
         pass

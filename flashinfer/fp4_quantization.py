@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,30 +19,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from enum import Enum
 from types import SimpleNamespace
 from typing import List, Optional, Tuple
 
-import torch
-
 from .jit import JitSpec
 from .jit import env as jit_env
-from .jit import gen_jit_spec, sm100a_nvcc_flags, sm90a_nvcc_flags
+from .jit import gen_jit_spec, sm90a_nvcc_flags, sm100a_nvcc_flags
 from .jit.cpp_ext import is_cuda_version_at_least
-from .utils import (
-    device_support_pdl,
-    get_shuffle_matrix_a_row_indices,
-    get_shuffle_matrix_sf_a_row_indices,
-    register_custom_op,
-    register_fake_op,
-)
+from .utils import (device_support_pdl, get_shuffle_matrix_a_row_indices,
+                    get_shuffle_matrix_sf_a_row_indices, register_custom_op,
+                    register_fake_op)
 
 
 def _pad_scale_factors(
-    unswizzled_sf: torch.Tensor, m: int, n: int, sf_vec_size: int = 16
-) -> torch.Tensor:
+    unswizzled_sf: paddle.Tensor, m: int, n: int, sf_vec_size: int = 16
+) -> paddle.Tensor:
     """Pad scale factors tensor to meet alignment requirements.
 
     Args:
@@ -49,17 +48,19 @@ def _pad_scale_factors(
         torch.Tensor: Padded scale factors tensor.
     """
     factor = sf_vec_size * 4
-    padded_row = ((m + 128 - 1) // 128) * 128  # Next multiple of 128
-    padded_col = ((n + factor - 1) // factor) * factor  # Next multiple of 64
-
-    # Pad the input tensor to [padded_row, padded_col // scaling_vector_size]
+    padded_row = (m + 128 - 1) // 128 * 128
+    padded_col = (n + factor - 1) // factor * factor
     pad_rows = padded_row - m
     pad_cols = (padded_col - n) // sf_vec_size
     if pad_rows == 0 and pad_cols == 0:
         return unswizzled_sf
     else:
-        return torch.nn.functional.pad(
-            unswizzled_sf, (0, pad_cols, 0, pad_rows), mode="constant", value=0
+        return paddle.nn.functional.pad(
+            x=unswizzled_sf,
+            pad=(0, pad_cols, 0, pad_rows),
+            mode="constant",
+            value=0,
+            pad_from_left_axis=False,
         ).contiguous()
 
 
@@ -111,19 +112,16 @@ def get_fp4_quantization_module(backend: str = "100"):
     else:
         raise ValueError(f"Invalid backend: {backend}")
 
-    @register_custom_op(
-        "flashinfer::fp4_quantize_sm100",
-        mutates_args=(""),
-    )
+    @register_custom_op("flashinfer::fp4_quantize_sm100", mutates_args="")
     def fp4_quantize_sm100(
-        input: torch.Tensor,
-        global_scale: Optional[torch.Tensor] = None,
+        input: paddle.Tensor,
+        global_scale: Optional[paddle.Tensor] = None,
         sf_vec_size: int = 16,
         sf_use_ue8m0: bool = False,
         is_sf_swizzled_layout: bool = True,
         is_sf_8x4_layout: bool = False,
         enable_pdl: Optional[bool] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
         """Quantize input tensor to FP4 format.
 
         Args:
@@ -142,7 +140,7 @@ def get_fp4_quantization_module(backend: str = "100"):
                 - Scale factors tensor with shape determined by layout and sf_vec_size
         """
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(input.device)
+            enable_pdl = device_support_pdl(input.place)
         return module.fp4_quantize(
             input,
             global_scale,
@@ -155,50 +153,33 @@ def get_fp4_quantization_module(backend: str = "100"):
 
     @register_fake_op("flashinfer::fp4_quantize_sm100")
     def _fake_fp4_quantize_sm100(
-        input: torch.Tensor,
-        global_scale: Optional[torch.Tensor] = None,
+        input: paddle.Tensor,
+        global_scale: Optional[paddle.Tensor] = None,
         sf_vec_size: int = 16,
         sf_use_ue8m0: bool = False,
         is_sf_swizzled_layout: bool = True,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        m, k = input.shape
-        return (
-            input.new_empty([m, k // 2], dtype=torch.int64),  # FLOAT4_E2M1X2
-            input.new_empty([m * k // sf_vec_size], dtype=torch.int32),  # Scale factors
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        m, k = tuple(input.shape)
+        return paddle.empty(shape=[m, k // 2], dtype="int64"), paddle.empty(
+            shape=[m * k // sf_vec_size], dtype="int32"
         )
 
-    @register_custom_op(
-        "flashinfer::mxfp4_dequantize_host",
-        mutates_args=(""),
-    )
+    @register_custom_op("flashinfer::mxfp4_dequantize_host", mutates_args="")
     def mxfp4_dequantize_host(
-        weight: torch.Tensor,
-        scale: torch.Tensor,
-        group_size: int = 32,
-    ) -> torch.Tensor:
-        return module.mxfp4_dequantize_host(
-            weight,
-            scale,
-            group_size,
-        )
+        weight: paddle.Tensor, scale: paddle.Tensor, group_size: int = 32
+    ) -> paddle.Tensor:
+        return module.mxfp4_dequantize_host(weight, scale, group_size)
 
     @register_fake_op("flashinfer::mxfp4_dequantize_host")
     def _fake_mxfp4_dequantize_host(
-        weight: torch.Tensor,
-        scale: torch.Tensor,
-        group_size: int = 32,
-    ) -> torch.Tensor:
-        return weight.new_empty(
-            [weight.shape[0], weight.shape[1] * 2], dtype=torch.float32
+        weight: paddle.Tensor, scale: paddle.Tensor, group_size: int = 32
+    ) -> paddle.Tensor:
+        return paddle.empty(
+            shape=[tuple(weight.shape)[0], tuple(weight.shape)[1] * 2], dtype="float32"
         )
 
-    @register_custom_op(
-        "flashinfer::block_scale_interleave_sm100",
-        mutates_args=("",),
-    )
-    def block_scale_interleave_sm100(
-        unswizzled_sf: torch.Tensor,
-    ) -> torch.Tensor:
+    @register_custom_op("flashinfer::block_scale_interleave_sm100", mutates_args=("",))
+    def block_scale_interleave_sm100(unswizzled_sf: paddle.Tensor) -> paddle.Tensor:
         """Swizzle block scale tensor for FP4 format.
 
         Args:
@@ -207,30 +188,28 @@ def get_fp4_quantization_module(backend: str = "100"):
         Returns:
             torch.Tensor: output tensor for swizzled block scale with dtype uint8.
         """
-        return module.block_scale_interleave_sm100(
-            unswizzled_sf,
-        )
+        return module.block_scale_interleave_sm100(unswizzled_sf)
 
     @register_fake_op("flashinfer::block_scale_interleave_sm100")
     def _fake_block_scale_interleave_sm100(
-        unswizzled_sf: torch.Tensor,
-    ) -> torch.Tensor:
-        return unswizzled_sf.new_empty(
-            [unswizzled_sf.shape[0] * unswizzled_sf.shape[1] // 16], dtype=torch.uint8
+        unswizzled_sf: paddle.Tensor,
+    ) -> paddle.Tensor:
+        return paddle.empty(
+            shape=[tuple(unswizzled_sf.shape)[0] * tuple(unswizzled_sf.shape)[1] // 16],
+            dtype="uint8",
         )
 
     @register_custom_op(
-        "flashinfer::e2m1_and_ufp8sf_scale_to_float_sm100",
-        mutates_args=(""),
+        "flashinfer::e2m1_and_ufp8sf_scale_to_float_sm100", mutates_args=""
     )
     def e2m1_and_ufp8sf_scale_to_float_sm100(
-        e2m1_tensor: torch.Tensor,
-        ufp8_scale_tensor: torch.Tensor,
-        global_scale_tensor: Optional[torch.Tensor] = None,
+        e2m1_tensor: paddle.Tensor,
+        ufp8_scale_tensor: paddle.Tensor,
+        global_scale_tensor: Optional[paddle.Tensor] = None,
         sf_vec_size: int = 16,
         ufp8_type: int = 1,
         is_sf_swizzled_layout: bool = True,
-    ) -> torch.Tensor:
+    ) -> paddle.Tensor:
         """Convert E2M1 format tensor and UFP8 scale factors to float tensor.
 
         This function performs dequantization by converting a packed FP4 tensor in E2M1 format
@@ -258,18 +237,18 @@ def get_fp4_quantization_module(backend: str = "100"):
 
     @register_fake_op("flashinfer::e2m1_and_ufp8sf_scale_to_float_sm100")
     def _fake_e2m1_and_ufp8sf_scale_to_float_sm100(
-        e2m1_tensor: torch.Tensor,
-        ufp8_scale_tensor: torch.Tensor,
-        global_scale_tensor: Optional[torch.Tensor] = None,
+        e2m1_tensor: paddle.Tensor,
+        ufp8_scale_tensor: paddle.Tensor,
+        global_scale_tensor: Optional[paddle.Tensor] = None,
         sf_vec_size: int = 16,
         ufp8_type: int = 1,
         is_sf_swizzled_layout: bool = True,
-    ) -> torch.Tensor:
-        return e2m1_tensor.new_empty(
-            [e2m1_tensor.shape[0], e2m1_tensor.shape[1] * 2], dtype=torch.float32
+    ) -> paddle.Tensor:
+        return paddle.empty(
+            shape=[tuple(e2m1_tensor.shape)[0], tuple(e2m1_tensor.shape)[1] * 2],
+            dtype="float32",
         )
 
-    # Register the module
     return SimpleNamespace(
         fp4_quantize_sm100=fp4_quantize_sm100,
         block_scale_interleave_sm100=block_scale_interleave_sm100,
@@ -279,14 +258,14 @@ def get_fp4_quantization_module(backend: str = "100"):
 
 
 def fp4_quantize(
-    input: torch.Tensor,
-    global_scale: Optional[torch.Tensor] = None,
+    input: paddle.Tensor,
+    global_scale: Optional[paddle.Tensor] = None,
     sf_vec_size: int = 16,
     sf_use_ue8m0: bool = False,
     is_sf_swizzled_layout: bool = True,
     is_sf_8x4_layout: bool = False,
     enable_pdl: Optional[bool] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
     """Quantize input tensor to FP4 format.
 
     This function implements FP4 quantization that converts input tensors to a compressed FP4 format
@@ -315,15 +294,12 @@ def fp4_quantize(
     """
     if sf_vec_size != 16 and sf_vec_size != 32:
         raise NotImplementedError("sf_vec_size can only be 16 or 32")
-
-    # for column major input, we need to transpose the input
-    is_column_major = input.stride(-2) == 1
+    is_column_major = input.get_strides()[-2] == 1
     if is_column_major:
-        input = input.transpose(-2, -1)
-
-    assert input.shape[-1] % sf_vec_size == 0
+        input = input.transpose(perm=dim2perm(input.ndim, -2, -1))
+    assert tuple(input.shape)[-1] % sf_vec_size == 0
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
+        enable_pdl = device_support_pdl(input.place)
     x_q, sf = get_fp4_quantization_module("100").fp4_quantize_sm100(
         input,
         global_scale,
@@ -333,15 +309,14 @@ def fp4_quantize(
         is_sf_8x4_layout,
         enable_pdl,
     )
-    sf = sf.reshape((-1, input.shape[-1] // sf_vec_size))
+    sf = sf.reshape((-1, tuple(input.shape)[-1] // sf_vec_size))
     if is_column_major:
-        x_q = x_q.transpose(-2, -1)
-        sf = sf.transpose(-2, -1)
-
+        x_q = x_q.transpose(perm=dim2perm(x_q.ndim, -2, -1))
+        sf = sf.transpose(perm=dim2perm(sf.ndim, -2, -1))
     return x_q, sf
 
 
-def block_scale_interleave(unswizzled_sf: torch.Tensor) -> torch.Tensor:
+def block_scale_interleave(unswizzled_sf: paddle.Tensor) -> paddle.Tensor:
     """Swizzle block scale tensor for FP4 format.
 
     This function swizzles the block scale tensor to optimize memory access patterns
@@ -356,31 +331,27 @@ def block_scale_interleave(unswizzled_sf: torch.Tensor) -> torch.Tensor:
     Raises:
         AssertionError: If input dtype is not uint8.
     """
-    # TODO(shuw): check input dtype is uint8
-    assert unswizzled_sf.dtype == torch.uint8, (
-        f"Input dtype must be uint8, got {unswizzled_sf.dtype}"
-    )
-
-    major, minor = torch.cuda.get_device_capability()
+    assert (
+        unswizzled_sf.dtype == "uint8"
+    ), f"Input dtype must be uint8, got {unswizzled_sf.dtype}"
+    major, minor = paddle.device.cuda.get_device_capability()
     device_arch = f"{major * 10 + minor}"
-
     return get_fp4_quantization_module(device_arch).block_scale_interleave_sm100(
-        unswizzled_sf,
+        unswizzled_sf
     )
 
 
-# Maintain compatibility with libraries using the old name
 nvfp4_block_scale_interleave = block_scale_interleave
 
 
 def e2m1_and_ufp8sf_scale_to_float(
-    e2m1_tensor: torch.Tensor,
-    ufp8_scale_tensor: torch.Tensor,
-    global_scale_tensor: Optional[torch.Tensor] = None,
+    e2m1_tensor: paddle.Tensor,
+    ufp8_scale_tensor: paddle.Tensor,
+    global_scale_tensor: Optional[paddle.Tensor] = None,
     sf_vec_size: int = 16,
     ufp8_type: int = 1,
     is_sf_swizzled_layout: bool = True,
-) -> torch.Tensor:
+) -> paddle.Tensor:
     """Convert E2M1 format tensor and UFP8 scale factors to float tensor.
 
     This function performs dequantization by converting a packed FP4 tensor in E2M1 format
@@ -398,7 +369,7 @@ def e2m1_and_ufp8sf_scale_to_float(
         torch.Tensor: Dequantized float tensor of shape [M, K] with dtype float32.
 
     """
-    major, minor = torch.cuda.get_device_capability()
+    major, minor = paddle.device.cuda.get_device_capability()
     device_arch = f"{major * 10 + minor}"
     return get_fp4_quantization_module(
         device_arch
@@ -412,19 +383,18 @@ def e2m1_and_ufp8sf_scale_to_float(
     )
 
 
-def shuffle_matrix_a(input_tensor: torch.Tensor, epilogue_tile_m: int) -> torch.Tensor:
+def shuffle_matrix_a(
+    input_tensor: paddle.Tensor, epilogue_tile_m: int
+) -> paddle.Tensor:
     """
     PyTorch equivalent of trtllm-gen `shuffleMatrixA`
     """
     row_indices = get_shuffle_matrix_a_row_indices(input_tensor, epilogue_tile_m)
-
-    return input_tensor[row_indices.to(input_tensor.device)]
+    return input_tensor[row_indices.to(input_tensor.place)]
 
 
 def shuffle_matrix_sf_a(
-    input_tensor: torch.Tensor,
-    epilogue_tile_m: int,
-    num_elts_per_sf: int = 16,
+    input_tensor: paddle.Tensor, epilogue_tile_m: int, num_elts_per_sf: int = 16
 ):
     """
     Cuda implementation of trtllm-gen `shuffleMatrixSfA` but with a caveat.
@@ -436,12 +406,8 @@ def shuffle_matrix_sf_a(
     and are in linear layout.
     This function doesn't add padding.
     """
-
     row_indices = get_shuffle_matrix_sf_a_row_indices(input_tensor, epilogue_tile_m)
-
-    w_shuffled = input_tensor[row_indices.to(input_tensor.device)]
-
-    # 128x4
+    w_shuffled = input_tensor[row_indices.to(input_tensor.place)]
     return block_scale_interleave(w_shuffled)
 
 
@@ -480,9 +446,7 @@ def nvfp4_quantize(
             - Quantized tensor of shape [M, K/2] with dtype FLOAT4_E2M1X2
             - Scale factors tensor with shape determined by layout and sf_vec_size
     """
-
     if do_shuffle:
-        # Weights 128x4 + shuffle. It is done during the model load and we do not care much about the perf
         assert sfLayout == SfLayout.layout_128x4
         a_fp4, a_sf = fp4_quantize(
             a.cuda(),
@@ -493,15 +457,12 @@ def nvfp4_quantize(
             is_sf_8x4_layout=False,
             enable_pdl=enable_pdl,
         )
-
         epilogue_tile_m = 128
-        a_fp4 = shuffle_matrix_a(a_fp4.view(torch.uint8), epilogue_tile_m)
-        a_sf = shuffle_matrix_sf_a(a_sf.view(torch.uint8), epilogue_tile_m).reshape(
-            a_sf.shape
+        a_fp4 = shuffle_matrix_a(a_fp4.view("uint8"), epilogue_tile_m)
+        a_sf = shuffle_matrix_sf_a(a_sf.view("uint8"), epilogue_tile_m).reshape(
+            tuple(a_sf.shape)
         )
     else:
-        # Activations with 8x4 layout for SFs (GEMM with small tileN)
-        # Activations with 128x4 layout for SFs (GEMM with large tileN)
         a_fp4, a_sf = fp4_quantize(
             a.cuda(),
             a_global_sf.cuda(),
@@ -511,7 +472,6 @@ def nvfp4_quantize(
             is_sf_8x4_layout=sfLayout == SfLayout.layout_8x4,
             enable_pdl=enable_pdl,
         )
-
     return a_fp4, a_sf
 
 
@@ -527,7 +487,7 @@ def mxfp4_quantize(a):
             - Quantized tensor of shape [M, K/2] with dtype uint8 (FLOAT4_E2M1X2)
             - Scale factors tensor with shape determined by layout and sf_vec_size (uint8)
     """
-    a_global_sf = (448 * 6) / a.float().abs().nan_to_num().max()
+    a_global_sf = 448 * 6 / a.astype(dtype="float32").abs().nan_to_num()._max()
     a_fp4, a_sf = fp4_quantize(a.cuda(), a_global_sf.cuda(), 32, True, True)
     return a_fp4, a_sf
 
@@ -544,9 +504,9 @@ def mxfp4_dequantize(a_fp4, a_sf):
         torch.Tensor: Dequantized tensor of shape [M, K] with dtype float.
     """
     return e2m1_and_ufp8sf_scale_to_float(
-        a_fp4.cpu().view(torch.uint8),
-        a_sf.cpu().view(torch.uint8).reshape(-1),
-        torch.tensor([1.0], device=a_fp4.device),
+        a_fp4.cpu().view("uint8"),
+        a_sf.cpu().view("uint8").reshape(-1),
+        paddle.to_tensor(data=[1.0], place=a_fp4.place),
         32,
         0,
         True,
@@ -554,10 +514,8 @@ def mxfp4_dequantize(a_fp4, a_sf):
 
 
 def mxfp4_dequantize_host(
-    weight: torch.Tensor,
-    scale: torch.Tensor,
-    group_size: int = 32,
-) -> torch.Tensor:
+    weight: paddle.Tensor, scale: paddle.Tensor, group_size: int = 32
+) -> paddle.Tensor:
     """
     Dequantize input tensor from MXFP4 format on host.
 
@@ -569,10 +527,8 @@ def mxfp4_dequantize_host(
     Returns:
         torch.Tensor: Dequantized tensor of shape [M, K] with dtype float.
     """
-    major, minor = torch.cuda.get_device_capability()
+    major, minor = paddle.device.cuda.get_device_capability()
     device_arch = f"{major * 10 + minor}"
     return get_fp4_quantization_module(device_arch).mxfp4_dequantize_host(
-        weight,
-        scale,
-        group_size,
+        weight, scale, group_size
     )

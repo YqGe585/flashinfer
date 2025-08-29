@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,9 +19,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import pytest
-import torch
 
 import flashinfer
 from flashinfer.utils import is_sm90a_supported
@@ -30,30 +34,22 @@ from flashinfer.utils import is_sm90a_supported
 def test_single_prefill(
     seq_len, num_qo_heads, num_kv_heads, causal, head_dim, logits_soft_cap
 ):
-    if not is_sm90a_supported(torch.device("cuda")):
+    if not is_sm90a_supported(device2str("cuda")):
         pytest.skip("SM90A is not supported")
-
     if num_qo_heads % num_kv_heads != 0:
         pytest.skip("num_qo_heads must be divisible by num_kv_heads")
-    torch.random.manual_seed(123)
-    q = torch.randn(seq_len, num_qo_heads, head_dim, dtype=torch.half, device="cuda")
-    k = torch.randn(seq_len, num_kv_heads, head_dim, dtype=torch.half, device="cuda")
-    v = torch.randn(seq_len, num_kv_heads, head_dim, dtype=torch.half, device="cuda")
-
+    paddle.seed(seed=123)
+    q = paddle.randn(shape=[seq_len, num_qo_heads, head_dim], dtype="float16")
+    k = paddle.randn(shape=[seq_len, num_kv_heads, head_dim], dtype="float16")
+    v = paddle.randn(shape=[seq_len, num_kv_heads, head_dim], dtype="float16")
     o_sm80, lse_sm80 = flashinfer.single_prefill_with_kv_cache_return_lse(
-        q,
-        k,
-        v,
-        causal=causal,
-        logits_soft_cap=logits_soft_cap,
-        backend="fa2",
+        q, k, v, causal=causal, logits_soft_cap=logits_soft_cap, backend="fa2"
     )
-
     o_sm90, lse_sm90 = flashinfer.single_prefill_with_kv_cache_return_lse(
         q, k, v, causal=causal, logits_soft_cap=logits_soft_cap, backend="fa3"
     )
-    torch.testing.assert_close(lse_sm80, lse_sm90, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(o_sm80, o_sm90, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(x=lse_sm80, y=lse_sm90, rtol=0.001, atol=0.001).item(), ""
+    assert paddle.allclose(x=o_sm80, y=o_sm90, rtol=0.001, atol=0.001).item(), ""
 
 
 @pytest.mark.parametrize("batch_size", [1, 4, 8, 16])
@@ -61,42 +57,38 @@ def test_single_prefill(
 @pytest.mark.parametrize("num_qo_heads", [1, 4, 8])
 @pytest.mark.parametrize("num_kv_heads", [1, 4, 8])
 @pytest.mark.parametrize("causal", [False, True])
-@pytest.mark.parametrize("head_dim", [128])  # [64, 128, 256])
+@pytest.mark.parametrize("head_dim", [128])
 @pytest.mark.parametrize("logits_soft_cap", [0.0, 30.0])
 def test_batch_ragged_prefill(
     batch_size, seq_len, num_qo_heads, num_kv_heads, causal, head_dim, logits_soft_cap
 ):
-    if not is_sm90a_supported(torch.device("cuda")):
+    if not is_sm90a_supported(device2str("cuda")):
         pytest.skip("SM90A is not supported")
-
     if num_qo_heads % num_kv_heads != 0:
         pytest.skip("num_qo_heads must be divisible by num_kv_heads")
-    torch.random.manual_seed(42)
-    q = torch.randn(
-        batch_size * seq_len, num_qo_heads, head_dim, dtype=torch.half, device="cuda"
+    paddle.seed(seed=42)
+    q = paddle.randn(
+        shape=[batch_size * seq_len, num_qo_heads, head_dim], dtype="float16"
     )
-    k = torch.randn(
-        batch_size * seq_len, num_kv_heads, head_dim, dtype=torch.half, device="cuda"
+    k = paddle.randn(
+        shape=[batch_size * seq_len, num_kv_heads, head_dim], dtype="float16"
     )
-    v = torch.randn(
-        batch_size * seq_len, num_kv_heads, head_dim, dtype=torch.half, device="cuda"
+    v = paddle.randn(
+        shape=[batch_size * seq_len, num_kv_heads, head_dim], dtype="float16"
     )
-
-    workspace_buffer = torch.empty(
-        256 * 1024 * 1024, dtype=torch.uint8, device="cuda:0"
-    )
-
+    workspace_buffer = paddle.empty(shape=256 * 1024 * 1024, dtype="uint8")
     wrapper_sm80 = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
         workspace_buffer, backend="fa2"
     )
-
     wrapper_sm90 = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
         workspace_buffer, backend="fa3"
     )
-
-    qo_indptr = torch.arange(0, batch_size * seq_len + 1, seq_len).int()
-    kv_indptr = torch.arange(0, batch_size * seq_len + 1, seq_len).int()
-
+    qo_indptr = paddle.arange(
+        start=0, end=batch_size * seq_len + 1, step=seq_len
+    ).astype(dtype="int32")
+    kv_indptr = paddle.arange(
+        start=0, end=batch_size * seq_len + 1, step=seq_len
+    ).astype(dtype="int32")
     wrapper_sm80.plan(
         qo_indptr,
         kv_indptr,
@@ -107,7 +99,6 @@ def test_batch_ragged_prefill(
         logits_soft_cap=logits_soft_cap,
     )
     o_sm80, lse_sm80 = wrapper_sm80.run_return_lse(q, k, v)
-
     wrapper_sm90.plan(
         qo_indptr,
         kv_indptr,
@@ -118,56 +109,39 @@ def test_batch_ragged_prefill(
         logits_soft_cap=logits_soft_cap,
     )
     o_sm90, lse_sm90 = wrapper_sm90.run_return_lse(q, k, v)
-
-    torch.testing.assert_close(lse_sm80, lse_sm90, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(o_sm80, o_sm90, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(x=lse_sm80, y=lse_sm90, rtol=0.001, atol=0.001).item(), ""
+    assert paddle.allclose(x=o_sm80, y=o_sm90, rtol=0.001, atol=0.001).item(), ""
 
 
 @pytest.mark.parametrize("batch_size", [1, 4, 8, 16])
 @pytest.mark.parametrize("seq_len", [11, 99, 1763, 9999, 32767])
 @pytest.mark.parametrize("num_heads", [4, 32, 128])
 @pytest.mark.parametrize("causal", [False, True])
-@pytest.mark.parametrize("dtype", [torch.half, torch.bfloat16])
-def test_deepseek_prefill(
-    batch_size,
-    seq_len,
-    num_heads,
-    causal,
-    dtype,
-):
-    if not is_sm90a_supported(torch.device("cuda")):
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
+def test_deepseek_prefill(batch_size, seq_len, num_heads, causal, dtype):
+    if not is_sm90a_supported(device2str("cuda")):
         pytest.skip("SM90A is not supported")
-
     if batch_size * seq_len > 131072:
         pytest.skip()
     head_dim_qk = 192
     head_dim_vo = 128
-    torch.random.manual_seed(42)
-    q = torch.randn(
-        batch_size * seq_len, num_heads, head_dim_qk, dtype=dtype, device="cuda"
-    )
-    k = torch.randn(
-        batch_size * seq_len, num_heads, head_dim_qk, dtype=dtype, device="cuda"
-    )
-    v = torch.randn(
-        batch_size * seq_len, num_heads, head_dim_vo, dtype=dtype, device="cuda"
-    )
-
-    workspace_buffer = torch.empty(
-        256 * 1024 * 1024, dtype=torch.uint8, device="cuda:0"
-    )
-
+    paddle.seed(seed=42)
+    q = paddle.randn(shape=[batch_size * seq_len, num_heads, head_dim_qk], dtype=dtype)
+    k = paddle.randn(shape=[batch_size * seq_len, num_heads, head_dim_qk], dtype=dtype)
+    v = paddle.randn(shape=[batch_size * seq_len, num_heads, head_dim_vo], dtype=dtype)
+    workspace_buffer = paddle.empty(shape=256 * 1024 * 1024, dtype="uint8")
     wrapper_sm80 = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
         workspace_buffer, backend="fa2"
     )
-
     wrapper_sm90 = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
         workspace_buffer, backend="fa3"
     )
-
-    qo_indptr = torch.arange(0, batch_size * seq_len + 1, seq_len).int()
-    kv_indptr = torch.arange(0, batch_size * seq_len + 1, seq_len).int()
-
+    qo_indptr = paddle.arange(
+        start=0, end=batch_size * seq_len + 1, step=seq_len
+    ).astype(dtype="int32")
+    kv_indptr = paddle.arange(
+        start=0, end=batch_size * seq_len + 1, step=seq_len
+    ).astype(dtype="int32")
     wrapper_sm80.plan(
         qo_indptr,
         kv_indptr,
@@ -180,7 +154,6 @@ def test_deepseek_prefill(
         kv_data_type=dtype,
     )
     o_sm80, lse_sm80 = wrapper_sm80.run_return_lse(q, k, v)
-
     wrapper_sm90.plan(
         qo_indptr,
         kv_indptr,
@@ -193,14 +166,13 @@ def test_deepseek_prefill(
         kv_data_type=dtype,
     )
     o_sm90, lse_sm90 = wrapper_sm90.run_return_lse(q, k, v)
-
-    torch.testing.assert_close(lse_sm80, lse_sm90, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(o_sm80, o_sm90, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(x=lse_sm80, y=lse_sm90, rtol=0.001, atol=0.001).item(), ""
+    assert paddle.allclose(x=o_sm80, y=o_sm90, rtol=0.001, atol=0.001).item(), ""
 
 
 @pytest.mark.parametrize("batch_size", [1, 4, 8, 16])
 @pytest.mark.parametrize("seq_len", [11, 12, 99, 1763, 9999, 32767])
-@pytest.mark.parametrize("page_size", [1])  # [1, 16])
+@pytest.mark.parametrize("page_size", [1])
 @pytest.mark.parametrize("num_qo_heads", [1, 4, 8])
 @pytest.mark.parametrize("num_kv_heads", [1, 4, 8])
 @pytest.mark.parametrize("causal", [False, True])
@@ -216,54 +188,43 @@ def test_batch_paged_prefill(
     head_dim,
     logits_soft_cap,
 ):
-    if not is_sm90a_supported(torch.device("cuda")):
+    if not is_sm90a_supported(device2str("cuda")):
         pytest.skip("SM90A is not supported")
-
     if num_qo_heads % num_kv_heads != 0:
         pytest.skip("num_qo_heads must be divisible by num_kv_heads")
-    torch.random.manual_seed(42)
-    q = torch.randn(
-        batch_size * seq_len, num_qo_heads, head_dim, dtype=torch.half, device="cuda"
+    paddle.seed(seed=42)
+    q = paddle.randn(
+        shape=[batch_size * seq_len, num_qo_heads, head_dim], dtype="float16"
     )
     num_pages_per_request = (seq_len + page_size - 1) // page_size
-    k = torch.randn(
-        batch_size * num_pages_per_request,
-        page_size,
-        num_kv_heads,
-        head_dim,
-        dtype=torch.half,
-        device="cuda",
+    k = paddle.randn(
+        shape=[batch_size * num_pages_per_request, page_size, num_kv_heads, head_dim],
+        dtype="float16",
     )
-    v = torch.randn(
-        batch_size * num_pages_per_request,
-        page_size,
-        num_kv_heads,
-        head_dim,
-        dtype=torch.half,
-        device="cuda",
+    v = paddle.randn(
+        shape=[batch_size * num_pages_per_request, page_size, num_kv_heads, head_dim],
+        dtype="float16",
     )
-
-    workspace_buffer = torch.empty(
-        256 * 1024 * 1024, dtype=torch.uint8, device="cuda:0"
-    )
-
+    workspace_buffer = paddle.empty(shape=256 * 1024 * 1024, dtype="uint8")
     wrapper_sm80 = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer, backend="fa2"
     )
-
     wrapper_sm90 = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer, backend="fa3"
     )
-
     last_page_len = seq_len - (num_pages_per_request - 1) * page_size
-    qo_indptr = torch.arange(0, batch_size * seq_len + 1, seq_len).int()
-    kv_indptr = torch.arange(
-        0, batch_size * num_pages_per_request + 1, num_pages_per_request
-    ).int()
-    # NOTE(Zihao): pad 256 elements to avoid out-of-bound because we didn't check the boundary in the kernel
-    kv_indices = torch.arange(0, batch_size * num_pages_per_request + 256).int()
-    last_page_len = torch.full((batch_size,), last_page_len, dtype=torch.int32)
-
+    qo_indptr = paddle.arange(
+        start=0, end=batch_size * seq_len + 1, step=seq_len
+    ).astype(dtype="int32")
+    kv_indptr = paddle.arange(
+        start=0, end=batch_size * num_pages_per_request + 1, step=num_pages_per_request
+    ).astype(dtype="int32")
+    kv_indices = paddle.arange(
+        start=0, end=batch_size * num_pages_per_request + 256
+    ).astype(dtype="int32")
+    last_page_len = paddle.full(
+        shape=(batch_size,), fill_value=last_page_len, dtype="int32"
+    )
     wrapper_sm80.plan(
         qo_indptr,
         kv_indptr,
@@ -277,7 +238,6 @@ def test_batch_paged_prefill(
         logits_soft_cap=logits_soft_cap,
     )
     o_sm80, lse_sm80 = wrapper_sm80.run_return_lse(q, (k, v))
-
     wrapper_sm90.plan(
         qo_indptr,
         kv_indptr,
@@ -291,9 +251,8 @@ def test_batch_paged_prefill(
         logits_soft_cap=logits_soft_cap,
     )
     o_sm90, lse_sm90 = wrapper_sm90.run_return_lse(q, (k, v))
-
-    torch.testing.assert_close(lse_sm80, lse_sm90, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(o_sm80, o_sm90, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(x=lse_sm80, y=lse_sm90, rtol=0.001, atol=0.001).item(), ""
+    assert paddle.allclose(x=o_sm80, y=o_sm90, rtol=0.001, atol=0.001).item(), ""
 
 
 @pytest.mark.parametrize("batch_size", [1])
@@ -329,29 +288,38 @@ def test_batch_prefill_with_paged_kv_cache_multi_item_scoring_fa3(
     logits_soft_cap,
     return_lse,
 ):
-    q = torch.randn(batch_size * qo_len, num_qo_heads, head_dim).to(0).half()
-    q_indptr_cpu = torch.arange(0, batch_size + 1).int() * qo_len
+    q = (
+        paddle.randn(shape=[batch_size * qo_len, num_qo_heads, head_dim])
+        .to(0)
+        .astype(dtype="float16")
+    )
+    q_indptr_cpu = (
+        paddle.arange(start=0, end=batch_size + 1).astype(dtype="int32") * qo_len
+    )
     num_pages_per_seq = (kv_len + page_size - 1) // page_size
     total_num_pages = num_pages_per_seq * batch_size
     kv_data = (
-        torch.randn(total_num_pages, 2, num_kv_heads, page_size, head_dim).to(0).half()
-        if kv_layout == "HND"
-        else torch.randn(total_num_pages, 2, page_size, num_kv_heads, head_dim)
+        paddle.randn(shape=[total_num_pages, 2, num_kv_heads, page_size, head_dim])
         .to(0)
-        .half()
+        .astype(dtype="float16")
+        if kv_layout == "HND"
+        else paddle.randn(shape=[total_num_pages, 2, page_size, num_kv_heads, head_dim])
+        .to(0)
+        .astype(dtype="float16")
     )
-    kv_indptr_cpu = torch.arange(0, batch_size + 1).int() * num_pages_per_seq
-    kv_indices_cpu = torch.arange(0, total_num_pages).int()
-    kv_last_page_len_cpu = torch.full(
-        (batch_size,), (kv_len - 1) % page_size + 1, dtype=torch.int32
+    kv_indptr_cpu = (
+        paddle.arange(start=0, end=batch_size + 1).astype(dtype="int32")
+        * num_pages_per_seq
     )
-
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.int8).to(0)
+    kv_indices_cpu = paddle.arange(start=0, end=total_num_pages).astype(dtype="int32")
+    kv_last_page_len_cpu = paddle.full(
+        shape=(batch_size,), fill_value=(kv_len - 1) % page_size + 1, dtype="int32"
+    )
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="int8").to(0)
     q_indptr_gpu = q_indptr_cpu.to(0)
     kv_indptr_gpu = kv_indptr_cpu.to(0)
     kv_indices_gpu = kv_indices_cpu.to(0)
     kv_last_page_len_gpu = kv_last_page_len_cpu.to(0)
-
     wrapper_fa2 = flashinfer.prefill.BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer, kv_layout, backend="fa2"
     )
@@ -366,17 +334,20 @@ def test_batch_prefill_with_paged_kv_cache_multi_item_scoring_fa3(
         page_size,
         causal=causal,
         logits_soft_cap=logits_soft_cap,
-        prefix_len_ptr=torch.tensor(prefix_len_ptr).to(dtype=torch.uint32).to(0),
-        token_pos_in_items_ptr=torch.tensor(token_pos_in_items_ptr)
-        .to(dtype=torch.uint16)
+        prefix_len_ptr=paddle.to_tensor(data=prefix_len_ptr)
+>>>>>>        .to(dtype=torch.uint32)
         .to(0),
-        token_pos_in_items_len=torch.tensor(token_pos_in_items_len)
-        .to(dtype=torch.uint32)
+        token_pos_in_items_ptr=paddle.to_tensor(data=token_pos_in_items_ptr)
+>>>>>>        .to(dtype=torch.uint16)
         .to(0),
-        max_item_len_ptr=torch.tensor(max_item_len_ptr).to(dtype=torch.uint16).to(0),
+        token_pos_in_items_len=paddle.to_tensor(data=token_pos_in_items_len)
+>>>>>>        .to(dtype=torch.uint32)
+        .to(0),
+        max_item_len_ptr=paddle.to_tensor(data=max_item_len_ptr)
+>>>>>>        .to(dtype=torch.uint16)
+        .to(0),
     )
     o_fa2, lse_fa2 = wrapper_fa2.run_return_lse(q, kv_data)
-
     wrapper_fa3 = flashinfer.prefill.BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer, kv_layout, backend="fa3"
     )
@@ -391,20 +362,22 @@ def test_batch_prefill_with_paged_kv_cache_multi_item_scoring_fa3(
         page_size,
         causal=causal,
         logits_soft_cap=logits_soft_cap,
-        prefix_len_ptr=torch.tensor(prefix_len_ptr).to(dtype=torch.uint32).to(0),
-        token_pos_in_items_ptr=torch.tensor(token_pos_in_items_ptr)
-        .to(dtype=torch.uint16)
+        prefix_len_ptr=paddle.to_tensor(data=prefix_len_ptr)
+>>>>>>        .to(dtype=torch.uint32)
         .to(0),
-        token_pos_in_items_len=torch.tensor(token_pos_in_items_len)
-        .to(dtype=torch.uint32)
+        token_pos_in_items_ptr=paddle.to_tensor(data=token_pos_in_items_ptr)
+>>>>>>        .to(dtype=torch.uint16)
         .to(0),
-        max_item_len_ptr=torch.tensor(max_item_len_ptr).to(dtype=torch.uint16).to(0),
+        token_pos_in_items_len=paddle.to_tensor(data=token_pos_in_items_len)
+>>>>>>        .to(dtype=torch.uint32)
+        .to(0),
+        max_item_len_ptr=paddle.to_tensor(data=max_item_len_ptr)
+>>>>>>        .to(dtype=torch.uint16)
+        .to(0),
     )
-
     o_fa3, lse_fa3 = wrapper_fa3.run_return_lse(q, kv_data)
-
-    torch.testing.assert_close(lse_fa2, lse_fa3, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(o_fa2, o_fa3, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(x=lse_fa2, y=lse_fa3, rtol=0.001, atol=0.001).item(), ""
+    assert paddle.allclose(x=o_fa2, y=o_fa3, rtol=0.001, atol=0.001).item(), ""
 
 
 @pytest.mark.parametrize("batch_size", [2])
@@ -460,29 +433,38 @@ def test_batch_prefill_with_paged_kv_cache_multi_item_scoring_fa3_bsz2(
     logits_soft_cap,
     return_lse,
 ):
-    q = torch.randn(batch_size * qo_len, num_qo_heads, head_dim).to(0).half()
-    q_indptr_cpu = torch.arange(0, batch_size + 1).int() * qo_len
+    q = (
+        paddle.randn(shape=[batch_size * qo_len, num_qo_heads, head_dim])
+        .to(0)
+        .astype(dtype="float16")
+    )
+    q_indptr_cpu = (
+        paddle.arange(start=0, end=batch_size + 1).astype(dtype="int32") * qo_len
+    )
     num_pages_per_seq = (kv_len + page_size - 1) // page_size
     total_num_pages = num_pages_per_seq * batch_size
     kv_data = (
-        torch.randn(total_num_pages, 2, num_kv_heads, page_size, head_dim).to(0).half()
-        if kv_layout == "HND"
-        else torch.randn(total_num_pages, 2, page_size, num_kv_heads, head_dim)
+        paddle.randn(shape=[total_num_pages, 2, num_kv_heads, page_size, head_dim])
         .to(0)
-        .half()
+        .astype(dtype="float16")
+        if kv_layout == "HND"
+        else paddle.randn(shape=[total_num_pages, 2, page_size, num_kv_heads, head_dim])
+        .to(0)
+        .astype(dtype="float16")
     )
-    kv_indptr_cpu = torch.arange(0, batch_size + 1).int() * num_pages_per_seq
-    kv_indices_cpu = torch.arange(0, total_num_pages).int()
-    kv_last_page_len_cpu = torch.full(
-        (batch_size,), (kv_len - 1) % page_size + 1, dtype=torch.int32
+    kv_indptr_cpu = (
+        paddle.arange(start=0, end=batch_size + 1).astype(dtype="int32")
+        * num_pages_per_seq
     )
-
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.int8).to(0)
+    kv_indices_cpu = paddle.arange(start=0, end=total_num_pages).astype(dtype="int32")
+    kv_last_page_len_cpu = paddle.full(
+        shape=(batch_size,), fill_value=(kv_len - 1) % page_size + 1, dtype="int32"
+    )
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="int8").to(0)
     q_indptr_gpu = q_indptr_cpu.to(0)
     kv_indptr_gpu = kv_indptr_cpu.to(0)
     kv_indices_gpu = kv_indices_cpu.to(0)
     kv_last_page_len_gpu = kv_last_page_len_cpu.to(0)
-
     wrapper_fa2 = flashinfer.prefill.BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer, kv_layout, backend="fa2"
     )
@@ -497,17 +479,20 @@ def test_batch_prefill_with_paged_kv_cache_multi_item_scoring_fa3_bsz2(
         page_size,
         causal=causal,
         logits_soft_cap=logits_soft_cap,
-        prefix_len_ptr=torch.tensor(prefix_len_ptr).to(dtype=torch.uint32).to(0),
-        token_pos_in_items_ptr=torch.tensor(token_pos_in_items_ptr)
-        .to(dtype=torch.uint16)
+        prefix_len_ptr=paddle.to_tensor(data=prefix_len_ptr)
+>>>>>>        .to(dtype=torch.uint32)
         .to(0),
-        token_pos_in_items_len=torch.tensor(token_pos_in_items_len)
-        .to(dtype=torch.uint32)
+        token_pos_in_items_ptr=paddle.to_tensor(data=token_pos_in_items_ptr)
+>>>>>>        .to(dtype=torch.uint16)
         .to(0),
-        max_item_len_ptr=torch.tensor(max_item_len_ptr).to(dtype=torch.uint16).to(0),
+        token_pos_in_items_len=paddle.to_tensor(data=token_pos_in_items_len)
+>>>>>>        .to(dtype=torch.uint32)
+        .to(0),
+        max_item_len_ptr=paddle.to_tensor(data=max_item_len_ptr)
+>>>>>>        .to(dtype=torch.uint16)
+        .to(0),
     )
     o_fa2, lse_fa2 = wrapper_fa2.run_return_lse(q, kv_data)
-
     wrapper_fa3 = flashinfer.prefill.BatchPrefillWithPagedKVCacheWrapper(
         workspace_buffer, kv_layout, backend="fa3"
     )
@@ -522,25 +507,23 @@ def test_batch_prefill_with_paged_kv_cache_multi_item_scoring_fa3_bsz2(
         page_size,
         causal=causal,
         logits_soft_cap=logits_soft_cap,
-        prefix_len_ptr=torch.tensor(prefix_len_ptr).to(dtype=torch.uint32).to(0),
-        token_pos_in_items_ptr=torch.tensor(token_pos_in_items_ptr)
-        .to(dtype=torch.uint16)
+        prefix_len_ptr=paddle.to_tensor(data=prefix_len_ptr)
+>>>>>>        .to(dtype=torch.uint32)
         .to(0),
-        token_pos_in_items_len=torch.tensor(token_pos_in_items_len)
-        .to(dtype=torch.uint32)
+        token_pos_in_items_ptr=paddle.to_tensor(data=token_pos_in_items_ptr)
+>>>>>>        .to(dtype=torch.uint16)
         .to(0),
-        max_item_len_ptr=torch.tensor(max_item_len_ptr).to(dtype=torch.uint16).to(0),
+        token_pos_in_items_len=paddle.to_tensor(data=token_pos_in_items_len)
+>>>>>>        .to(dtype=torch.uint32)
+        .to(0),
+        max_item_len_ptr=paddle.to_tensor(data=max_item_len_ptr)
+>>>>>>        .to(dtype=torch.uint16)
+        .to(0),
     )
-
     o_fa3, lse_fa3 = wrapper_fa3.run_return_lse(q, kv_data)
-
-    torch.testing.assert_close(lse_fa2, lse_fa3, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(o_fa2, o_fa3, rtol=1e-3, atol=1e-3)
+    assert paddle.allclose(x=lse_fa2, y=lse_fa3, rtol=0.001, atol=0.001).item(), ""
+    assert paddle.allclose(x=o_fa2, y=o_fa3, rtol=0.001, atol=0.001).item(), ""
 
 
 if __name__ == "__main__":
-    # test_batch_prefill(14, 64, 32, 32, False, 128)
-    # test_batch_prefill(1, 32767, 8, 8, True, 128)
-    # test_single_prefill(64, 1, 1, False, 256)
-    # test_batch_paged_prefill(2, 32768, 1, 1, 1, False, 128)
     test_batch_paged_prefill(16, 32767, 1, 8, 8, True, 128, 0)

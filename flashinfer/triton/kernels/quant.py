@@ -1,5 +1,5 @@
-import triton  # type: ignore[import]
-import triton.language as tl  # type: ignore[import]
+import triton
+import triton.language as tl
 
 
 @triton.jit
@@ -23,5 +23,4 @@ def scale_and_clamp(x, scale, dtype):
         clamp_max = 3.3895313892515355e38
     else:
         tl.static_assert(False, f"Unsupported dtype: {dtype}")
-
     return tl.clamp(x.to(tl.float32) * scale, clamp_min, clamp_max).to(dtype)

@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,10 +15,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from typing import Any, Optional, Tuple, Union
-
-import torch
 
 from flashinfer.sampling import get_sampling_module
 from flashinfer.utils import _get_cache_buf, device_support_pdl
@@ -26,12 +25,12 @@ from .types import TaggedTensor, TensorType
 
 
 def _to_tensor_scalar_tuple(
-    x: Union[torch.Tensor, float, int],
-) -> Tuple[Optional[torch.Tensor], Union[float, int]]:
-    if isinstance(x, torch.Tensor):
-        return (x, 0 if x.dtype == torch.int32 else 0.0)
+    x: Union[paddle.Tensor, float, int]
+) -> Tuple[Optional[paddle.Tensor], Union[float, int]]:
+    if isinstance(x, paddle.Tensor):
+        return x, 0 if x.dtype == "int32" else 0.0
     else:
-        return (None, x)
+        return None, x
 
 
 class TemperatureOp(ParameterizedOp):
@@ -51,21 +50,17 @@ class TemperatureOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         temperature = self._get_param("temperature", kwargs, required=True)
         maybe_temperature_arr, temperature_val = _to_tensor_scalar_tuple(temperature)
         if maybe_temperature_arr is None and (
             not isinstance(temperature_val, float) or temperature_val <= 0
         ):
             raise ValueError("Temperature must be positive float or a tensor array")
-
         if maybe_temperature_arr is not None:
             temperature = maybe_temperature_arr
         else:
             temperature = temperature_val
-
         scaled_logits = tensor.data / temperature
-
         return TaggedTensor(scaled_logits, output_type)
 
 
@@ -88,15 +83,12 @@ class SoftmaxOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         enable_pdl = self.default_params.get("enable_pdl", None)
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(tensor.data.device)
-
+            enable_pdl = device_support_pdl(tensor.data.place)
         workspace_buffer = _get_cache_buf(
-            "softmax_workspace", 1024 * 1024, tensor.data.device
+            "softmax_workspace", 1024 * 1024, tensor.data.place
         )
-
         probs = get_sampling_module().softmax(
             workspace_buffer, tensor.data, None, 1.0, enable_pdl
         )
@@ -126,19 +118,15 @@ class ProbsTopKOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         top_k = self._get_param("top_k", kwargs, required=True)
         maybe_top_k_arr, top_k_val = _to_tensor_scalar_tuple(top_k)
-
         if maybe_top_k_arr is None and (
             not isinstance(top_k_val, int) or top_k_val <= 0
         ):
             raise ValueError("top_k must be a positive integer or a tensor array")
-
         renorm_probs = get_sampling_module().top_k_renorm_probs(
             tensor.data, maybe_top_k_arr, top_k_val
         )
-
         return TaggedTensor(renorm_probs, output_type)
 
 
@@ -165,15 +153,12 @@ class LogitsTopKOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         top_k = self._get_param("top_k", kwargs, required=True)
         maybe_top_k_arr, top_k_val = _to_tensor_scalar_tuple(top_k)
-
         if maybe_top_k_arr is None and (
             not isinstance(top_k_val, int) or top_k_val <= 0
         ):
             raise ValueError("top_k must be a positive integer or a tensor array")
-
         masked_logits = get_sampling_module().top_k_mask_logits(
             tensor.data, maybe_top_k_arr, top_k_val
         )
@@ -203,17 +188,13 @@ class TopPOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         top_p = self._get_param("top_p", kwargs, required=True)
         maybe_top_p_arr, top_p_val = _to_tensor_scalar_tuple(top_p)
-
-        if maybe_top_p_arr is None and not (0 < top_p_val <= 1):
+        if maybe_top_p_arr is None and not 0 < top_p_val <= 1:
             raise ValueError("top_p must be float in (0, 1] or a tensor array")
-
         renorm_probs = get_sampling_module().top_p_renorm_probs(
             tensor.data, maybe_top_p_arr, top_p_val
         )
-
         return TaggedTensor(renorm_probs, output_type)
 
 
@@ -240,26 +221,23 @@ class MinPOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         min_p = self._get_param("min_p", kwargs, required=True)
         maybe_min_p_arr, min_p_val = _to_tensor_scalar_tuple(min_p)
-
-        if maybe_min_p_arr is None and not (0 < min_p_val <= 1):
+        if maybe_min_p_arr is None and not 0 < min_p_val <= 1:
             raise ValueError("min_p must be float in (0, 1] or a tensor array")
-
         if maybe_min_p_arr is not None:
-            min_p_mask = tensor.data >= (
-                maybe_min_p_arr.unsqueeze(-1) * tensor.data.max(dim=-1, keepdim=True)[0]
+            min_p_mask = (
+                tensor.data
+                >= maybe_min_p_arr.unsqueeze(axis=-1)
+                * tensor.data.max(dim=-1, keepdim=True)[0]
             )
         else:
-            min_p_mask = tensor.data >= (
-                min_p_val * tensor.data.max(dim=-1, keepdim=True)[0]
+            min_p_mask = (
+                tensor.data >= min_p_val * tensor.data.max(dim=-1, keepdim=True)[0]
             )
-
         masked_probs = tensor.data.clone()
         masked_probs[~min_p_mask] = 0
-        probs = masked_probs / masked_probs.sum(dim=-1, keepdim=True)
-
+        probs = masked_probs / masked_probs.sum(axis=-1, keepdim=True)
         return TaggedTensor(probs, output_type)
 
 
@@ -290,16 +268,12 @@ class ProbsSampleOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         deterministic = self.default_params.get("deterministic", True)
-
         indices = self._get_param("indices", kwargs, required=False)
         generator = self._get_param("generator", kwargs, required=False)
-
         samples = get_sampling_module().sampling_from_probs(
             tensor.data, indices, deterministic, generator
         )
-
         return TaggedTensor(samples, output_type)
 
 
@@ -330,20 +304,15 @@ class LogitsSampleOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         deterministic = self.default_params.get("deterministic", True)
-
         indices = self._get_param("indices", kwargs, required=False)
         generator = self._get_param("generator", kwargs, required=False)
-
         samples = get_sampling_module().sampling_from_logits(
             tensor.data, indices, deterministic, generator
         )
-
         return TaggedTensor(samples, output_type)
 
 
-# Fused operators
 class FusedTemperatureSoftmaxOp(ParameterizedOp):
     """
     Fused temperature scaling and softmax operator.
@@ -370,22 +339,18 @@ class FusedTemperatureSoftmaxOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         temperature = self._get_param("temperature", kwargs, required=True)
         maybe_temperature_arr, temperature_val = _to_tensor_scalar_tuple(temperature)
         if maybe_temperature_arr is None and (
             not isinstance(temperature_val, float) or temperature_val <= 0
         ):
             raise ValueError("Temperature must be positive float or a tensor array")
-
         workspace_buffer = _get_cache_buf(
-            "softmax_workspace", 1024 * 1024, tensor.data.device
+            "softmax_workspace", 1024 * 1024, tensor.data.place
         )
-
         enable_pdl = self.default_params.get("enable_pdl", None)
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(tensor.data.device)
-
+            enable_pdl = device_support_pdl(tensor.data.place)
         probs = get_sampling_module().softmax(
             workspace_buffer,
             tensor.data,
@@ -393,7 +358,6 @@ class FusedTemperatureSoftmaxOp(ParameterizedOp):
             temperature_val,
             enable_pdl,
         )
-
         return TaggedTensor(probs, output_type)
 
 
@@ -429,24 +393,18 @@ class FusedProbsTopKSampleOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         deterministic = self.default_params.get("deterministic", True)
-
         top_k = self._get_param("top_k", kwargs, required=True)
         maybe_top_k_arr, top_k_val = _to_tensor_scalar_tuple(top_k)
-
         if maybe_top_k_arr is None and (
             not isinstance(top_k_val, int) or top_k_val <= 0
         ):
             raise ValueError("top_k must be a positive integer or a tensor array")
-
         indices = self._get_param("indices", kwargs, required=False)
         generator = self._get_param("generator", kwargs, required=False)
-
         samples = get_sampling_module().top_k_sampling_from_probs(
             tensor.data, indices, maybe_top_k_arr, top_k_val, deterministic, generator
         )
-
         return TaggedTensor(samples, output_type)
 
 
@@ -482,22 +440,16 @@ class FusedProbsTopPSampleOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         deterministic = self.default_params.get("deterministic", True)
-
         top_p = self._get_param("top_p", kwargs, required=True)
         maybe_top_p_arr, top_p_val = _to_tensor_scalar_tuple(top_p)
-
-        if maybe_top_p_arr is None and not (0 < top_p_val <= 1):
+        if maybe_top_p_arr is None and not 0 < top_p_val <= 1:
             raise ValueError("top_p must be float in (0, 1] or a tensor array")
-
         indices = self._get_param("indices", kwargs, required=False)
         generator = self._get_param("generator", kwargs, required=False)
-
         samples = get_sampling_module().top_p_sampling_from_probs(
             tensor.data, indices, maybe_top_p_arr, top_p_val, deterministic, generator
         )
-
         return TaggedTensor(samples, output_type)
 
 
@@ -533,22 +485,16 @@ class FusedProbsMinPSampleOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         deterministic = self.default_params.get("deterministic", True)
-
         min_p = self._get_param("min_p", kwargs, required=True)
         maybe_min_p_arr, min_p_val = _to_tensor_scalar_tuple(min_p)
-
-        if maybe_min_p_arr is None and not (0 < min_p_val <= 1):
+        if maybe_min_p_arr is None and not 0 < min_p_val <= 1:
             raise ValueError("min_p must be float in (0, 1] or a tensor array")
-
         indices = self._get_param("indices", kwargs, required=False)
         generator = self._get_param("generator", kwargs, required=False)
-
         samples = get_sampling_module().min_p_sampling_from_probs(
             tensor.data, indices, maybe_min_p_arr, min_p_val, deterministic, generator
         )
-
         return TaggedTensor(samples, output_type)
 
 
@@ -586,26 +532,19 @@ class FusedProbsTopKTopPSampleOp(ParameterizedOp):
 
     def __call__(self, tensor: TaggedTensor, **kwargs: Any) -> TaggedTensor:
         output_type = self._validate_input_type(tensor)
-
         deterministic = self.default_params.get("deterministic", True)
-
         top_k = self._get_param("top_k", kwargs, required=True)
         maybe_top_k_arr, top_k_val = _to_tensor_scalar_tuple(top_k)
-
         top_p = self._get_param("top_p", kwargs, required=True)
         maybe_top_p_arr, top_p_val = _to_tensor_scalar_tuple(top_p)
-
         if maybe_top_k_arr is None and (
             not isinstance(top_k_val, int) or top_k_val <= 0
         ):
             raise ValueError("top_k must be a positive integer or a tensor array")
-
-        if maybe_top_p_arr is None and not (0 < top_p_val <= 1):
+        if maybe_top_p_arr is None and not 0 < top_p_val <= 1:
             raise ValueError("top_p must be float in (0, 1] or a tensor array")
-
         indices = self._get_param("indices", kwargs, required=False)
         generator = self._get_param("generator", kwargs, required=False)
-
         samples = get_sampling_module().top_k_top_p_sampling_from_probs(
             tensor.data,
             indices,
@@ -616,5 +555,4 @@ class FusedProbsTopKTopPSampleOp(ParameterizedOp):
             deterministic,
             generator,
         )
-
         return TaggedTensor(samples, output_type)

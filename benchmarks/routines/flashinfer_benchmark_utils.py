@@ -1,17 +1,13 @@
-import torch
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
 
 from flashinfer.testing.utils import set_seed
 
-# Output columns for the test results.
 output_column_dict = {
-    "perf": [
-        "routine",
-        "median_time",
-        "std_time",
-        "tflops",
-        "tb_per_sec",
-        "backend",
-    ],
+    "perf": ["routine", "median_time", "std_time", "tflops", "tb_per_sec", "backend"],
     "attention": [
         "page_size",
         "batch_size",
@@ -60,7 +56,6 @@ output_column_dict = {
         "input_dtype",
         "weight_dtype",
         "gated_act",
-        # CUTLASS fused MoE specific
         "cutlass_variant",
         "quantized_input",
         "tp_size",
@@ -78,7 +73,6 @@ output_column_dict = {
         "repro_command",
     ],
 }
-
 full_output_columns = (
     output_column_dict["perf"]
     + output_column_dict["attention"]
@@ -86,7 +80,6 @@ full_output_columns = (
     + output_column_dict["moe"]
     + output_column_dict["general"]
 )
-
 benchmark_apis = {
     "attention": [
         "BatchDecodeWithPagedKVCacheWrapper",
@@ -118,25 +111,27 @@ def print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec):
 
 def get_device(args):
     set_seed(args.random_seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    gpu_name = torch.cuda.get_device_name(torch.cuda.current_device()).replace(" ", "_")
+    device = device2str("cuda" if paddle.device.cuda.device_count() >= 1 else "cpu")
+    gpu_name = paddle.device.cuda.get_device_name(
+        device=paddle.device.get_device()
+    ).replace(" ", "_")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {gpu_name = }")
+        print(f"[VVERBOSE] gpu_name = {gpu_name!r}")
     return device
 
 
 def dtype_str_to_torch_dtype(dtype_str):
     if dtype_str == "bfloat16":
-        return torch.bfloat16
+        return "bfloat16"
     elif dtype_str == "float16":
-        return torch.float16
+        return "float16"
     elif dtype_str == "float32":
-        return torch.float32
+        return "float32"
     elif dtype_str == "float64":
-        return torch.float64
+        return "float64"
     elif dtype_str == "fp8_e4m3":
-        return torch.float8_e4m3fn
+>>>>>>        return torch.float8_e4m3fn
     elif dtype_str == "fp8_e5m2":
-        return torch.float8_e5m2
+>>>>>>        return torch.float8_e5m2
     else:
         raise ValueError(f"Unsupported dtype: {dtype_str}")

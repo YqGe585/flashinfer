@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from abc import ABC, abstractmethod
 from typing import Any, List, Optional
 
@@ -130,7 +129,6 @@ class Temperature(LogitsProcessor):
             raise ValueError(
                 f"Temperature can only be applied to LOGITS, got {input_type}"
             )
-
         return [TemperatureOp(**self.params)]
 
 
@@ -186,7 +184,6 @@ class Softmax(LogitsProcessor):
 
         if input_type != TensorType.LOGITS:
             raise ValueError(f"Softmax can only be applied to LOGITS, got {input_type}")
-
         return [SoftmaxOp(**self.params)]
 
 
@@ -315,7 +312,6 @@ class TopP(LogitsProcessor):
 
         if input_type != TensorType.PROBS:
             raise ValueError(f"TopP can only be applied to PROBS, got {input_type}")
-
         return [TopPOp(**self.params)]
 
 
@@ -363,7 +359,6 @@ class MinP(LogitsProcessor):
 
         if input_type != TensorType.PROBS:
             raise ValueError(f"MinP can only be applied to PROBS, got {input_type}")
-
         return [MinPOp(**self.params)]
 
 

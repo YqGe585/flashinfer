@@ -1,36 +1,32 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
 import functools
 
+import paddle
 import pytest
-import torch
+from paddle_utils import *
 from utils_fp4 import cast_from_fp4, recover_swizzled_scales, ref_fp4_quant
 
-from flashinfer import (
-    block_scale_interleave,
-    e2m1_and_ufp8sf_scale_to_float,
-    fp4_quantize,
-    mxfp4_quantize,
-    mxfp4_dequantize,
-)
+from flashinfer import (block_scale_interleave, e2m1_and_ufp8sf_scale_to_float,
+                        fp4_quantize, mxfp4_dequantize, mxfp4_quantize)
 from flashinfer.utils import is_sm100a_supported
 
-DTYPES = [torch.float16, torch.bfloat16]
-# The batch dimension doesn't need to be multiple of 128
+DTYPES = ["float16", "bfloat16"]
 SHAPES = [(128, 64), (256, 128), (120, 64), (200, 256)]
 SEEDS = [42]
 CUDA_DEVICES = ["cuda:0"]
-
 FLOAT4_E2M1_MAX = 6.0
-FLOAT8_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
-
+>>>>>>FLOAT8_E4M3_MAX = paddle.finfo(dtype=torch.float8_e4m3fn).max
 BLOCK_SIZE = 16
 
 
 def swizzle_sf(
-    unswizzled_sf: torch.Tensor,
+    unswizzled_sf: paddle.Tensor,
     original_row: int,
     original_col: int,
     scaling_vector_size: int = 16,
-) -> torch.Tensor:
+) -> paddle.Tensor:
     """
     Inverse of `unswizzle_sf`. Converts an unswizzled tensor back to swizzled form.
 
@@ -45,44 +41,35 @@ def swizzle_sf(
     """
     unswizzled_sf = unswizzled_sf.contiguous()
     factor = scaling_vector_size * 4
-    padded_row = ((original_row + 128 - 1) // 128) * 128  # Next multiple of 128
-    padded_col = ((original_col + factor - 1) // factor) * factor  # Next multiple of 64
-
-    # Pad the input tensor to [padded_row, padded_col // scaling_vector_size]
+    padded_row = (original_row + 128 - 1) // 128 * 128
+    padded_col = (original_col + factor - 1) // factor * factor
     pad_rows = padded_row - original_row
     pad_cols = (padded_col - original_col) // scaling_vector_size
-    padded_sf = torch.nn.functional.pad(
-        unswizzled_sf,
-        (0, pad_cols, 0, pad_rows),
+    padded_sf = paddle.nn.functional.pad(
+        x=unswizzled_sf,
+        pad=(0, pad_cols, 0, pad_rows),
         mode="constant",
         value=0,
+        pad_from_left_axis=False,
     ).contiguous()
-
-    # Reshape and transpose to reverse unswizzle_sf
     num_m_tiles = padded_row // 128
     num_k_tiles = padded_col // factor
-    sf_reshaped = padded_sf.view(num_m_tiles, 4, 32, num_k_tiles, 4)  # Reverse reshape
-    sf_swizzled = sf_reshaped.transpose(
-        1, 3
-    )  # Reverse transpose [num_m_tiles, num_k_tiles, 32, 4, 4]
-    sf_swizzled = sf_swizzled.reshape(
-        padded_row, padded_col // scaling_vector_size
-    )  # Flatten to [128, 64]
-
+    sf_reshaped = padded_sf.view(num_m_tiles, 4, 32, num_k_tiles, 4)
+    sf_swizzled = sf_reshaped.transpose(perm=dim2perm(sf_reshaped.ndim, 1, 3))
+    sf_swizzled = sf_swizzled.reshape(padded_row, padded_col // scaling_vector_size)
     return sf_swizzled.contiguous()
 
 
 def unswizzle_sf(
-    sf: torch.Tensor, row: int, col: int, scaling_vector_size: int = 16
-) -> torch.Tensor:
+    sf: paddle.Tensor, row: int, col: int, scaling_vector_size: int = 16
+) -> paddle.Tensor:
     factor = scaling_vector_size * 4
     num_m_tiles = (row + 128 - 1) // 128
     num_k_tiles = (col + factor - 1) // factor
-    # SF layout [num_m_tiles, num_k_tiles, 32 (m_tile column major), 4 (m_tile column major), 4(k_tile)]
     sf_reshaped = sf.view(num_m_tiles, num_k_tiles, 32, 4, 4)
-    sf_unswizzle = sf_reshaped.transpose(1, 3)
+    sf_unswizzle = sf_reshaped.transpose(perm=dim2perm(sf_reshaped.ndim, 1, 3))
     sf_unswizzle = sf_unswizzle.reshape(num_m_tiles * 32 * 4, num_k_tiles * 4)
-    sf_unswizzle_sliced = sf_unswizzle[:row, : (col // scaling_vector_size)]
+    sf_unswizzle_sliced = sf_unswizzle[:row, : col // scaling_vector_size]
     return sf_unswizzle_sliced.contiguous()
 
 
@@ -92,25 +79,25 @@ def unswizzle_sf(
 @pytest.mark.parametrize("device", CUDA_DEVICES)
 @pytest.mark.parametrize("sf_use_ue8m0", [False, True])
 @pytest.mark.parametrize("is_swizzled", [False, True])
-@torch.inference_mode()
+@paddle.no_grad()
 def test_fp4_quantization(
-    dtype: torch.dtype,
+    dtype: paddle.dtype,
     shape: tuple[int, int],
     seed: int,
     device: str,
     sf_use_ue8m0: bool,
     is_swizzled: bool,
 ) -> None:
-    if not is_sm100a_supported(torch.device(device)):
+    if not is_sm100a_supported(device2str(device)):
         pytest.skip("Nvfp4 Requires compute capability of 10 or above")
-    torch.set_default_device(device)
-    torch.manual_seed(seed)
+    paddle.device.set_device(device=device2str(device))
+    paddle.seed(seed=seed)
     m, n = shape
     sf_vec_size = 32 if sf_use_ue8m0 else 16
-    x = torch.randn((m, n), dtype=dtype)
-    tensor_amax = torch.abs(x).max().to(torch.float32)
+    x = paddle.randn(shape=(m, n), dtype=dtype)
+    tensor_amax = paddle.abs(x=x)._max().to("float32")
     if sf_use_ue8m0:
-        global_scale = torch.tensor(1.0, dtype=torch.float32)
+        global_scale = paddle.to_tensor(data=1.0, dtype="float32")
     else:
         global_scale = FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX / tensor_amax
     out_ref, scale_ref = ref_fp4_quant(x, global_scale, sf_vec_size, sf_use_ue8m0)
@@ -119,56 +106,42 @@ def test_fp4_quantization(
     )
     assert n % sf_vec_size == 0, f"cols needs to be {sf_vec_size} divisible"
     if sf_use_ue8m0:
-        out_scale = (out_scale.to(torch.int32) << 23).view(torch.float32)
+        out_scale = (out_scale.to("int32") << 23).view("float32")
     else:
-        out_scale = out_scale.view(torch.float8_e4m3fn).to(torch.float32)
+>>>>>>        out_scale = out_scale.view(torch.float8_e4m3fn).to("float32")
     if is_swizzled:
         scale_ans = recover_swizzled_scales(
-            out_scale.reshape(-1, n // sf_vec_size),
-            m,
-            n,
-            sf_vec_size,
+            out_scale.reshape(-1, n // sf_vec_size), m, n, sf_vec_size
         )
     else:
         scale_ans = out_scale
     out_ans = cast_from_fp4(out).reshape(m, n)
-    torch.testing.assert_close(out_ans, out_ref, rtol=1e0, atol=1e-1)
-    torch.testing.assert_close(scale_ans, scale_ref, rtol=1e-1, atol=1e-1)
+    assert paddle.allclose(x=out_ans, y=out_ref, rtol=1.0, atol=0.1).item(), ""
+    assert paddle.allclose(x=scale_ans, y=scale_ref, rtol=0.1, atol=0.1).item(), ""
 
 
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("device", CUDA_DEVICES)
-@torch.inference_mode()
+@paddle.no_grad()
 def test_scale_swizzling(
-    dtype: torch.dtype,
-    shape: tuple[int, int],
-    seed: int,
-    device: str,
+    dtype: paddle.dtype, shape: tuple[int, int], seed: int, device: str
 ) -> None:
-    if not is_sm100a_supported(torch.device("cuda")):
+    if not is_sm100a_supported(device2str("cuda")):
         pytest.skip("Nvfp4 Requires compute capability of 10 or above")
-    torch.set_default_device(device)
-    torch.manual_seed(seed)
+    paddle.device.set_device(device=device2str(device))
+    paddle.seed(seed=seed)
     m, n = shape
-    x = torch.randn((m, n), dtype=dtype)
-    tensor_amax = torch.abs(x).max().to(torch.float32)
+    x = paddle.randn(shape=(m, n), dtype=dtype)
+    tensor_amax = paddle.abs(x=x)._max().to("float32")
     global_scale = FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX / tensor_amax
-
     _, unswizzled_scale = fp4_quantize(x, global_scale, BLOCK_SIZE, False, False)
     _, swizzled_scale = fp4_quantize(x, global_scale, BLOCK_SIZE, False, True)
     assert n % BLOCK_SIZE == 0, f"cols needs to be {BLOCK_SIZE} divisible"
-    recovered_unswizzled_scale = unswizzle_sf(
-        swizzle_sf(unswizzled_scale, m, n),
-        m,
-        n,
-    )
-
-    # We don't expect the following since padding:
-    # swizzle_sf(unswizzled_scale) == swizzled_scale
+    recovered_unswizzled_scale = unswizzle_sf(swizzle_sf(unswizzled_scale, m, n), m, n)
     ref_unswizzled_scale = unswizzle_sf(swizzled_scale, m, n)
-    assert_equal = functools.partial(torch.testing.assert_close, rtol=0, atol=0)
+    assert_equal = functools.partial(paddle.allclose, rtol=0, atol=0)
     assert_equal(recovered_unswizzled_scale, unswizzled_scale)
     assert_equal(ref_unswizzled_scale, unswizzled_scale)
 
@@ -176,47 +149,30 @@ def test_scale_swizzling(
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("device", CUDA_DEVICES)
-@torch.inference_mode()
-def test_block_scale_interleave(
-    shape: tuple[int, int],
-    seed: int,
-    device: str,
-) -> None:
+@paddle.no_grad()
+def test_block_scale_interleave(shape: tuple[int, int], seed: int, device: str) -> None:
     """Test the block_scale_interleave function directly."""
-    if not is_sm100a_supported(torch.device("cuda")):
+    if not is_sm100a_supported(device2str("cuda")):
         pytest.skip("Nvfp4 Requires compute capability of 10 or above")
-    torch.set_default_device(device)
-    torch.manual_seed(seed)
-
+    paddle.device.set_device(device=device2str(device))
+    paddle.seed(seed=seed)
     m, n = shape
     sf_vec_size = BLOCK_SIZE
-
-    # Create a test scale factors tensor with uint8 dtype
-    # The shape should be [m, n // sf_vec_size] for scale factors
-    scale_shape = (m, n // sf_vec_size)
-    unswizzled_sf = torch.randint(0, 256, scale_shape, dtype=torch.uint8, device=device)
-
-    # Test the swizzling function
+    scale_shape = m, n // sf_vec_size
+    unswizzled_sf = paddle.randint(low=0, high=256, shape=scale_shape, dtype="uint8")
     swizzled_sf = block_scale_interleave(unswizzled_sf)
-
-    # Compare against the reference implementation
     ref_swizzled_sf = swizzle_sf(unswizzled_sf, m, n, sf_vec_size)
-
-    # Basic checks
-    assert swizzled_sf.dtype == torch.uint8, f"Expected uint8, got {swizzled_sf.dtype}"
-    assert swizzled_sf.device == unswizzled_sf.device, "Device mismatch"
-
-    # Check that the output has the expected padded shape
+    assert swizzled_sf.dtype == "uint8", f"Expected uint8, got {swizzled_sf.dtype}"
+    assert swizzled_sf.place == unswizzled_sf.place, "Device mismatch"
     factor = sf_vec_size * 4
-    padded_row = ((m + 128 - 1) // 128) * 128  # Next multiple of 128
-    padded_col = ((n + factor - 1) // factor) * factor  # Next multiple of 64
-    expected_shape = (padded_row, padded_col // sf_vec_size)
+    padded_row = (m + 128 - 1) // 128 * 128
+    padded_col = (n + factor - 1) // factor * factor
+    expected_shape = padded_row, padded_col // sf_vec_size
     expected_size = expected_shape[0] * expected_shape[1]
-
-    assert expected_size == swizzled_sf.shape[0], (
-        f"Expected size {expected_size}, got {swizzled_sf.shape[0]}"
-    )
-    assert_equal = functools.partial(torch.testing.assert_close, rtol=0, atol=0)
+    assert (
+        expected_size == tuple(swizzled_sf.shape)[0]
+    ), f"Expected size {expected_size}, got {tuple(swizzled_sf.shape)[0]}"
+    assert_equal = functools.partial(paddle.allclose, rtol=0, atol=0)
     assert_equal(swizzled_sf.reshape(expected_shape), ref_swizzled_sf)
 
 
@@ -224,37 +180,24 @@ def test_block_scale_interleave(
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("device", CUDA_DEVICES)
 @pytest.mark.parametrize("sf_use_ue8m0", [True, False])
-@torch.inference_mode()
+@paddle.no_grad()
 def test_e2m1_dequantization(
-    shape: tuple[int, int],
-    seed: int,
-    device: str,
-    sf_use_ue8m0: bool,
+    shape: tuple[int, int], seed: int, device: str, sf_use_ue8m0: bool
 ) -> None:
     """Test roundtrip: fp4_quantize -> e2m1_and_ufp8sf_scale_to_float."""
-    if not is_sm100a_supported(torch.device("cuda")):
+    if not is_sm100a_supported(device2str("cuda")):
         pytest.skip("Nvfp4 Requires compute capability of 10 or above")
-    torch.set_default_device(device)
-    torch.manual_seed(seed)
-
-    # Create a reasonable test tensor
+    paddle.device.set_device(device=device2str(device))
+    paddle.seed(seed=seed)
     m, n = shape
-    x = torch.randn((m, n), dtype=torch.float16)
-
-    # Calculate global scale as in the other tests
-    tensor_amax = torch.abs(x).max().to(torch.float32)
+    x = paddle.randn(shape=(m, n), dtype="float16")
+    tensor_amax = paddle.abs(x=x)._max().to("float32")
     global_scale = FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX / tensor_amax
-
-    # Test with default common settings
     is_sf_swizzled_layout = True
     block_size = 32 if sf_use_ue8m0 else 16
-
-    # Step 1: Quantize with fp4_quantize
     quantized_tensor, scale_factors = fp4_quantize(
         x, global_scale, block_size, sf_use_ue8m0, is_sf_swizzled_layout
     )
-
-    # Step 2: Dequantize with e2m1_and_ufp8sf_scale_to_float
     ufp8_type = 0 if sf_use_ue8m0 else 1
     dequantized_tensor = e2m1_and_ufp8sf_scale_to_float(
         quantized_tensor,
@@ -264,53 +207,35 @@ def test_e2m1_dequantization(
         ufp8_type=ufp8_type,
         is_sf_swizzled_layout=is_sf_swizzled_layout,
     )
-
-    # Move back to device for comparison
     dequantized_tensor = dequantized_tensor.to(device)
-    x_float32 = x.to(torch.float32)
-
-    # Step 3: Compare results
-    assert dequantized_tensor.shape == x.shape, (
-        f"Shape mismatch: expected {x.shape}, got {dequantized_tensor.shape}"
-    )
-    assert dequantized_tensor.dtype == torch.float32, (
-        f"Expected float32, got {dequantized_tensor.dtype}"
-    )
-
-    # Check for invalid values
-    assert not torch.isnan(dequantized_tensor).any(), (
-        "Dequantized tensor contains NaN values"
-    )
-    assert not torch.isinf(dequantized_tensor).any(), (
-        "Dequantized tensor contains Inf values"
-    )
-
-    # Compare with original - should be reasonably close since FP4 is designed to preserve important values
-    torch.testing.assert_close(
-        dequantized_tensor,
-        x_float32,
-        rtol=0.3,
-        atol=0.5,  # Reasonable tolerance for FP4 quantization
-        msg="Quantize -> dequantize roundtrip failed",
-    )
+    x_float32 = x.to("float32")
+    assert tuple(dequantized_tensor.shape) == tuple(
+        x.shape
+    ), f"Shape mismatch: expected {tuple(x.shape)}, got {tuple(dequantized_tensor.shape)}"
+    assert (
+        dequantized_tensor.dtype == "float32"
+    ), f"Expected float32, got {dequantized_tensor.dtype}"
+    assert (
+        not paddle.isnan(x=dequantized_tensor).astype("bool").any()
+    ), "Dequantized tensor contains NaN values"
+    assert (
+        not paddle.isinf(x=dequantized_tensor).astype("bool").any()
+    ), "Dequantized tensor contains Inf values"
+    assert paddle.allclose(
+        x=dequantized_tensor, y=x_float32, rtol=0.3, atol=0.5
+    ).item(), "Quantize -> dequantize roundtrip failed"
 
 
 @pytest.mark.parametrize("device", CUDA_DEVICES)
 def test_mxfp4_quantize_roundtrip(device: str):
-    if not is_sm100a_supported(torch.device(device)):
+    if not is_sm100a_supported(device2str(device)):
         pytest.skip("Nvfp4 Requires compute capability of 10 or above")
-    x = torch.randn((128, 64), device="cuda", dtype=torch.bfloat16) / 10
-
+    x = paddle.randn(shape=(128, 64), dtype="bfloat16") / 10
     quant_a, sfs = mxfp4_quantize(x)
     dq_a = mxfp4_dequantize(quant_a, sfs)
-
-    torch.testing.assert_close(
-        dq_a.cpu().to(torch.float32),
-        x.cpu().to(torch.float32),
-        rtol=0.3,
-        atol=0.5,
-        msg="Quantize -> dequantize mxfp4 roundtrip failed",
-    )
+    assert paddle.allclose(
+        x=dq_a.cpu().to("float32"), y=x.cpu().to("float32"), rtol=0.3, atol=0.5
+    ).item(), "Quantize -> dequantize mxfp4 roundtrip failed"
 
 
 if __name__ == "__main__":

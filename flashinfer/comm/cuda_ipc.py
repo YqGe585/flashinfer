@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,17 +15,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import ctypes
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-
-import torch.distributed as dist
-from torch.distributed import ProcessGroup
-
-# NOTE(Zihao): we should use cuda-python instead of ctypes cuda runtime bindings.
-# However, cuda-python's API is not stable yet, so we use ctypes bindings instead.
-# which is copied from vllm codebase.
 
 cudaError_t = ctypes.c_int
 cudaMemcpyKind = ctypes.c_int
@@ -46,7 +40,7 @@ def find_loaded_library(lib_name) -> Optional[str]:
     the file `/proc/self/maps` contains the memory maps of the process, which includes the
     shared libraries loaded by the process. We can use this file to find the path of the
     a loaded library.
-    """  # noqa
+    """
     found = False
     with open("/proc/self/maps") as f:
         for line in f:
@@ -54,16 +48,13 @@ def find_loaded_library(lib_name) -> Optional[str]:
                 found = True
                 break
     if not found:
-        # the library is not loaded in the current process
         return None
-    # if lib_name is libcudart, we need to match a line with:
-    # address /path/to/libcudart-hash.so.11.0
     start = line.index("/")
     path = line[start:].strip()
     filename = path.split("/")[-1]
-    assert filename.rpartition(".so")[0].startswith(lib_name), (
-        f"Unexpected filename: {filename} for library {lib_name}"
-    )
+    assert filename.rpartition(".so")[0].startswith(
+        lib_name
+    ), f"Unexpected filename: {filename} for library {lib_name}"
     return path
 
 
@@ -71,52 +62,36 @@ class CudaRTLibrary:
     """CudaRTLibrary"""
 
     exported_functions = [
-        # ​cudaError_t cudaSetDevice ( int  device )
         Function("cudaSetDevice", cudaError_t, [ctypes.c_int]),
-        # cudaError_t   cudaDeviceSynchronize ( void )
         Function("cudaDeviceSynchronize", cudaError_t, []),
-        # ​cudaError_t cudaDeviceReset ( void )
         Function("cudaDeviceReset", cudaError_t, []),
-        # const char*   cudaGetErrorString ( cudaError_t error )
         Function("cudaGetErrorString", ctypes.c_char_p, [cudaError_t]),
-        # ​cudaError_t    cudaMalloc ( void** devPtr, size_t size )
         Function(
             "cudaMalloc",
             cudaError_t,
             [ctypes.POINTER(ctypes.c_void_p), ctypes.c_size_t],
         ),
-        # ​cudaError_t    cudaFree ( void* devPtr )
         Function("cudaFree", cudaError_t, [ctypes.c_void_p]),
-        # ​cudaError_t cudaMemset ( void* devPtr, int  value, size_t count )
         Function(
             "cudaMemset", cudaError_t, [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
         ),
-        # ​cudaError_t cudaMemcpy ( void* dst, const void* src, size_t count, cudaMemcpyKind kind ) # noqa
         Function(
             "cudaMemcpy",
             cudaError_t,
             [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, cudaMemcpyKind],
         ),
-        # cudaError_t cudaIpcGetMemHandle ( cudaIpcMemHandle_t* handle, void* devPtr ) # noqa
         Function(
             "cudaIpcGetMemHandle",
             cudaError_t,
             [ctypes.POINTER(cudaIpcMemHandle_t), ctypes.c_void_p],
         ),
-        # ​cudaError_t cudaIpcOpenMemHandle ( void** devPtr, cudaIpcMemHandle_t handle, unsigned int  flags ) # noqa
         Function(
             "cudaIpcOpenMemHandle",
             cudaError_t,
             [ctypes.POINTER(ctypes.c_void_p), cudaIpcMemHandle_t, ctypes.c_uint],
         ),
     ]
-
-    # class attribute to store the mapping from the path to the library
-    # to avoid loading the same library multiple times
     path_to_library_cache: Dict[str, Any] = {}
-
-    # class attribute to store the mapping from library path
-    #  to the corresponding dictionary
     path_to_dict_mapping: Dict[str, Dict[str, Any]] = {}
 
     def __init__(self, so_file: Optional[str] = None):
@@ -127,7 +102,6 @@ class CudaRTLibrary:
             lib = ctypes.CDLL(so_file)
             CudaRTLibrary.path_to_library_cache[so_file] = lib
         self.lib = CudaRTLibrary.path_to_library_cache[so_file]
-
         if so_file not in CudaRTLibrary.path_to_dict_mapping:
             _funcs = {}
             for func in CudaRTLibrary.exported_functions:
@@ -195,7 +169,7 @@ cudart = CudaRTLibrary()
 
 
 def create_shared_buffer(
-    size_in_bytes: int, group: Optional[ProcessGroup] = None
+>>>>>>    size_in_bytes: int, group: Optional[torch.distributed.ProcessGroup] = None
 ) -> List[int]:
     """
     Creates a shared buffer and returns a list of pointers
@@ -204,34 +178,34 @@ def create_shared_buffer(
     pointer = cudart.cudaMalloc(size_in_bytes)
     handle = cudart.cudaIpcGetMemHandle(pointer)
     if group is None:
-        group = dist.group.WORLD
-    world_size = dist.get_world_size(group=group)
-    rank = dist.get_rank(group=group)
+>>>>>>        group = torch.distributed.group.WORLD
+    world_size = paddle.distributed.get_world_size(group=group)
+    rank = paddle.distributed.get_rank(group=group)
     handles = [None] * world_size
-    dist.all_gather_object(handles, handle, group=group)
+    handles = []
+    paddle.distributed.all_gather_object(object_list=handles, obj=handle, group=group)
     handles = [None] * world_size
-    dist.all_gather_object(handles, handle, group=group)
-
+    handles = []
+    paddle.distributed.all_gather_object(object_list=handles, obj=handle, group=group)
     pointers: List[int] = []
     for i, h in enumerate(handles):
         if i == rank:
             pointers.append(pointer.value)
         else:
             pointers.append(cudart.cudaIpcOpenMemHandle(h).value)
-
-    dist.barrier(group=group)
+    paddle.distributed.barrier(group=group)
     return pointers
 
 
 def free_shared_buffer(
-    pointers: List[int], group: Optional[ProcessGroup] = None
+>>>>>>    pointers: List[int], group: Optional[torch.distributed.ProcessGroup] = None
 ) -> None:
     """
     Frees a shared buffer.
     """
     if group is None:
-        group = dist.group.WORLD
-    rank = dist.get_rank(group=group)
+>>>>>>        group = torch.distributed.group.WORLD
+    rank = paddle.distributed.get_rank(group=group)
     if pointers and len(pointers) > rank and pointers[rank] is not None:
         cudart.cudaFree(ctypes.c_void_p(pointers[rank]))
-    dist.barrier(group=group)
+    paddle.distributed.barrier(group=group)

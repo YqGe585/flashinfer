@@ -1,40 +1,32 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
 import multiprocessing as mp
 import socket
 from typing import Any
 
 import numpy as np
+import paddle
 import pytest
-import torch
-import torch.distributed as dist
+from paddle_utils import *
 
 import flashinfer.comm as comm
 
-# todo(Yingyi): add benchmark and quant test
-
-# Usage: test var
 kOneShotMaxTokenNum = 128
 MIN_TOKEN_NUM = 1
 MAX_TOKEN_NUM = 2048
 SF_VEC_SIZE = 16
-
-# temp var
-SCALE_FACTOR_RANGE = (-1, 1)
+SCALE_FACTOR_RANGE = -1, 1
 
 
 def _run_correctness_worker(world_size, rank, dtype, hidden_dim, distributed_init_port):
-    device = torch.device(f"cuda:{rank}")
-    torch.cuda.set_device(device)
+    device = device2str(f"cuda:{rank}")
+    paddle.device.set_device(device=device2str(device))
     distributed_init_method = f"tcp://localhost:{distributed_init_port}"
-    dist.init_process_group(
-        backend="nccl",
-        init_method=distributed_init_method,
-        rank=rank,
-        world_size=world_size,
-    )
-    group = dist.group.WORLD
-
+    paddle.distributed.init_parallel_env()
+>>>>>>    group = torch.distributed.group.WORLD
     try:
-        device = torch.device(f"cuda:{rank}")
+        device = device2str(f"cuda:{rank}")
         token_nums = [1, 128, 1024, 2048]
         pattern_codes = [
             comm.AllReduceFusionPattern.kAllReduce,
@@ -53,23 +45,19 @@ def _run_correctness_worker(world_size, rank, dtype, hidden_dim, distributed_ini
         use_oneshots = [True, False, None]
         trigger_completion_at_ends = [True, False]
         fp32_accs = [True, False]
-
-        lamport_use_fp32 = dtype == torch.float32
-
-        # create workspace for allreduce fusion
-        ipc_handles, workspace_tensor = (
-            comm.trtllm_create_ipc_workspace_for_all_reduce_fusion(
-                rank,
-                world_size,
-                MAX_TOKEN_NUM,
-                hidden_dim,
-                group=group,
-                use_fp32_lamport=lamport_use_fp32,
-            )
+        lamport_use_fp32 = dtype == "float32"
+        (
+            ipc_handles,
+            workspace_tensor,
+        ) = comm.trtllm_create_ipc_workspace_for_all_reduce_fusion(
+            rank,
+            world_size,
+            MAX_TOKEN_NUM,
+            hidden_dim,
+            group=group,
+            use_fp32_lamport=lamport_use_fp32,
         )
-
         test_loop = 5
-
         for token_num in token_nums:
             for pattern_code in pattern_codes:
                 for swizzled_layout_code in swizzled_layout_codes:
@@ -79,87 +67,74 @@ def _run_correctness_worker(world_size, rank, dtype, hidden_dim, distributed_ini
                                 for fp32_acc in fp32_accs:
                                     if token_num < world_size and not use_oneshot:
                                         continue
-                                    if dtype == torch.float32 and (
+                                    if dtype == "float32" and (
                                         pattern_code
                                         == comm.AllReduceFusionPattern.kARResidualRMSNormOutFP4Quant
                                         or pattern_code
                                         == comm.AllReduceFusionPattern.kARResidualRMSNormFP4Quant
                                     ):
                                         continue
-
-                                    dist.barrier(group=group)
+                                    paddle.distributed.barrier(group=group)
                                     test_passed = True
                                     print(
                                         f"test RANK {rank}: token{token_num}-hidden_dim{hidden_dim}-dtype{dtype}-pattern{pattern_code}-layout{swizzled_layout_code}-pdl{launch_with_pdl} start"
                                     )
-                                    dist.barrier(group=group)
-                                    torch.cuda.synchronize()
-
+                                    paddle.distributed.barrier(group=group)
+                                    paddle.device.synchronize()
                                     message_size = token_num * hidden_dim
-
-                                    allreduce_in = torch.randn(
-                                        message_size, dtype=dtype, device=device
+                                    allreduce_in = paddle.randn(
+                                        shape=message_size, dtype=dtype
                                     )
                                     allreduce_in_clone = allreduce_in.clone()
-
-                                    all_reduce_out = torch.zeros(
-                                        message_size, dtype=dtype, device=device
+                                    all_reduce_out = paddle.zeros(
+                                        shape=message_size, dtype=dtype
                                     )
-
-                                    residual_in = torch.randn(
-                                        message_size, dtype=dtype, device=device
+                                    residual_in = paddle.randn(
+                                        shape=message_size, dtype=dtype
                                     )
                                     residual_in_clone = residual_in.clone()
-
-                                    residual_out = torch.empty_like(residual_in)
-                                    norm_out = torch.empty_like(residual_in)
-                                    quant_out = torch.empty(
-                                        message_size, dtype=dtype, device=device
+                                    residual_out = paddle.empty_like(x=residual_in)
+                                    norm_out = paddle.empty_like(x=residual_in)
+                                    quant_out = paddle.empty(
+                                        shape=message_size, dtype=dtype
                                     )
-
                                     scale_out = None
-                                    assert hidden_dim % SF_VEC_SIZE == 0, (
-                                        "hidden_dim must be divisible by SF_VEC_SIZE"
-                                    )
+                                    assert (
+                                        hidden_dim % SF_VEC_SIZE == 0
+                                    ), "hidden_dim must be divisible by SF_VEC_SIZE"
                                     if (
                                         swizzled_layout_code
                                         == comm.QuantizationSFLayout.SWIZZLED_128x4
                                     ):
-                                        # TODO(Yingyi): check this
                                         padded_message_size = (
-                                            (token_num + 127) // 128 * 128
-                                        ) * ((hidden_dim + 63) // 64 * 4)
-                                        scale_out = torch.empty(
-                                            padded_message_size,
-                                            dtype=dtype,
-                                            device=device,
+                                            (token_num + 127)
+                                            // 128
+                                            * 128
+                                            * ((hidden_dim + 63) // 64 * 4)
+                                        )
+                                        scale_out = paddle.empty(
+                                            shape=padded_message_size, dtype=dtype
                                         )
                                     else:
-                                        scale_out = torch.empty(
-                                            message_size // SF_VEC_SIZE,
+                                        scale_out = paddle.empty(
+                                            shape=message_size // SF_VEC_SIZE,
                                             dtype=dtype,
-                                            device=device,
                                         )
-
-                                    rms_gamma = torch.randn(
-                                        hidden_dim, dtype=dtype, device=device
+                                    rms_gamma = paddle.randn(
+                                        shape=hidden_dim, dtype=dtype
                                     )
                                     scale_factor = (
-                                        torch.rand(
-                                            1, dtype=torch.float32, device=device
-                                        )
+                                        paddle.rand(shape=[1], dtype="float32")
                                         * (
                                             SCALE_FACTOR_RANGE[1]
                                             - SCALE_FACTOR_RANGE[0]
                                         )
                                         + SCALE_FACTOR_RANGE[0]
                                     )
-                                    rms_eps = 1e-3
-
-                                    # warmup
-                                    s = torch.cuda.Stream()
-                                    s.wait_stream(torch.cuda.current_stream())
-                                    with torch.cuda.stream(s):
+                                    rms_eps = 0.001
+                                    s = paddle.device.Stream()
+                                    s.wait_stream(paddle.device.current_stream())
+                                    with paddle.device.stream_guard(stream=s):
                                         for _ in range(test_loop):
                                             comm.trtllm_allreduce_fusion(
                                                 allreduce_in=allreduce_in,
@@ -184,11 +159,8 @@ def _run_correctness_worker(world_size, rank, dtype, hidden_dim, distributed_ini
                                                 scale_factor=scale_factor,
                                                 layout_code=swizzled_layout_code,
                                             )
-
-                                    # NOTE: in real case, you dont have to set all optional params. You could set those required by fusion pattern.
-                                    # capture
-                                    g = torch.cuda.CUDAGraph()
-                                    with torch.cuda.graph(g):
+>>>>>>                                    g = torch.cuda.CUDAGraph()
+>>>>>>                                    with torch.cuda.graph(g):
                                         for _ in range(test_loop):
                                             comm.trtllm_allreduce_fusion(
                                                 allreduce_in=allreduce_in,
@@ -213,11 +185,8 @@ def _run_correctness_worker(world_size, rank, dtype, hidden_dim, distributed_ini
                                                 scale_factor=scale_factor,
                                                 layout_code=swizzled_layout_code,
                                             )
-                                    # replay
                                     g.replay()
-                                    torch.cuda.synchronize()
-
-                                    # match shape
+                                    paddle.device.synchronize()
                                     all_reduce_out = all_reduce_out.view(
                                         token_num, hidden_dim
                                     )
@@ -225,73 +194,61 @@ def _run_correctness_worker(world_size, rank, dtype, hidden_dim, distributed_ini
                                         token_num, hidden_dim
                                     )
                                     norm_out = norm_out.view(token_num, hidden_dim)
-
-                                    torch.cuda.synchronize()
-
-                                    # calculate reference
-                                    # allreduce_out
-                                    dist.all_reduce(allreduce_in_clone, group=group)
+                                    paddle.device.synchronize()
+                                    paddle.distributed.all_reduce(
+                                        tensor=allreduce_in_clone, group=group
+                                    )
                                     ref_allreduce_out = allreduce_in_clone.clone()
                                     ref_allreduce_out = ref_allreduce_out.view(
                                         token_num, hidden_dim
-                                    ).to(torch.float32)
-
-                                    # residual_out
+                                    ).to("float32")
                                     ref_residual_out = (
                                         ref_allreduce_out
                                         + residual_in_clone.view(
                                             token_num, hidden_dim
-                                        ).to(torch.float32)
+                                        ).to("float32")
                                     )
-
-                                    # norm_out
                                     variance = (
-                                        ref_residual_out.to(torch.float32)
-                                        .pow(2)
-                                        .mean(dim=-1, keepdim=True)
+                                        ref_residual_out.to("float32")
+                                        .pow(y=2)
+                                        .mean(axis=-1, keepdim=True)
                                     )
-                                    hidden_states = ref_residual_out * torch.rsqrt(
-                                        variance + rms_eps
+                                    hidden_states = ref_residual_out * paddle.rsqrt(
+                                        x=variance + rms_eps
                                     )
                                     ref_norm_out = (
-                                        rms_gamma.to(torch.float32) * hidden_states
+                                        rms_gamma.to("float32") * hidden_states
                                     )
-
-                                    # check correctness
-                                    tolerance = 8e-2 if dtype == torch.float16 else 8e-1
-                                    # compare allreduce_out
+                                    tolerance = 0.08 if dtype == "float16" else 0.8
                                     if (
                                         pattern_code
                                         == comm.AllReduceFusionPattern.kAllReduce
                                     ):
-                                        torch.testing.assert_close(
-                                            all_reduce_out.to(torch.float32),
-                                            ref_allreduce_out,
+                                        assert paddle.allclose(
+                                            x=all_reduce_out.to("float32"),
+                                            y=ref_allreduce_out,
                                             atol=tolerance,
-                                            rtol=1e-2,
-                                        )
+                                            rtol=0.01,
+                                        ).item(), ""
                                     elif (
                                         pattern_code
                                         == comm.AllReduceFusionPattern.kARResidualRMSNormOutFP8Quant
                                         or pattern_code
                                         == comm.AllReduceFusionPattern.kARResidualRMSNormOutFP4Quant
                                     ):
-                                        torch.testing.assert_close(
-                                            residual_out.to(torch.float32),
-                                            ref_residual_out,
+                                        assert paddle.allclose(
+                                            x=residual_out.to("float32"),
+                                            y=ref_residual_out,
                                             atol=tolerance,
-                                            rtol=1e-2,
-                                        )
-
-                                        torch.testing.assert_close(
-                                            norm_out.to(torch.float32),
-                                            ref_norm_out,
+                                            rtol=0.01,
+                                        ).item(), ""
+                                        assert paddle.allclose(
+                                            x=norm_out.to("float32"),
+                                            y=ref_norm_out,
                                             atol=tolerance,
-                                            rtol=1e-2,
-                                        )
-
-                                        # todo(Yingyi): check quant out
-                                    dist.barrier(group=group)
+                                            rtol=0.01,
+                                        ).item(), ""
+                                    paddle.distributed.barrier(group=group)
                                     if test_passed:
                                         print(
                                             f"test RANK {rank}: token{token_num}-hidden_dim{hidden_dim}-dtype{dtype}-pattern{pattern_code}-layout{swizzled_layout_code}-pdl{launch_with_pdl} passed"
@@ -301,11 +258,9 @@ def _run_correctness_worker(world_size, rank, dtype, hidden_dim, distributed_ini
                                             f"test RANK {rank}: token{token_num}-hidden_dim{hidden_dim}-dtype{dtype}-pattern{pattern_code}-layout{swizzled_layout_code}-pdl{launch_with_pdl} failed"
                                         )
     finally:
-        dist.barrier(group=group)
-
+        paddle.distributed.barrier(group=group)
         comm.trtllm_destroy_ipc_workspace_for_all_reduce(ipc_handles, group=group)
-
-        dist.destroy_process_group(group=group)
+>>>>>>        torch.distributed.destroy_process_group(group=group)
 
 
 def get_open_port() -> int:
@@ -321,13 +276,12 @@ def get_open_port() -> int:
 
 def multi_process_parallel(
     world_size: int,
-    dtype: torch.dtype,
+    dtype: paddle.dtype,
     hidden_dim: int,
     test_target: Any,
     target_args: tuple = (),
 ) -> None:
     mp.set_start_method("spawn", force=True)
-
     procs = []
     distributed_init_port = get_open_port()
     for i in range(world_size):
@@ -339,35 +293,30 @@ def multi_process_parallel(
             distributed_init_port,
         ) + target_args
         proc = mp.Process(target=test_target, args=proc_args, name=f"Worker-{i}")
-        proc.start()
+        """Not Support auto convert *.start, please judge whether it is Pytorch API and convert by yourself"""
+>>>>>>        proc.start()
         procs.append(proc)
-
     for i in range(world_size):
         procs[i].join()
-        assert procs[i].exitcode == 0, (
-            f"Process {i} failed with exit code {procs[i].exitcode}"
-        )
+        assert (
+            procs[i].exitcode == 0
+        ), f"Process {i} failed with exit code {procs[i].exitcode}"
 
 
 @pytest.mark.parametrize("world_size", [2, 4, 8])
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
 @pytest.mark.parametrize("hidden_dim", [1024, 2048, 4096, 7168, 8192])
 def test_trtllm_allreduce_fusion(world_size, dtype, hidden_dim):
     np.random.seed(42)
-    torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
-    available_gpus = torch.cuda.device_count()
+    paddle.seed(seed=42)
+    paddle.seed(seed=42)
+    available_gpus = paddle.device.cuda.device_count()
     if world_size > available_gpus:
         raise ValueError(
             f"world_size {world_size} is greater than available_gpus {available_gpus}"
         )
     print(f"Running test for world_size={world_size}")
-
     multi_process_parallel(
-        world_size,
-        dtype,
-        hidden_dim,
-        _run_correctness_worker,
-        target_args=(),
+        world_size, dtype, hidden_dim, _run_correctness_worker, target_args=()
     )
     print(f"allreduce fusion tp = {world_size}: OK")

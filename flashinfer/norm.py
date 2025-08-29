@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,11 +15,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from typing import Optional
-
-import torch
 
 from .jit import JitSpec
 from .jit import env as jit_env
@@ -41,13 +40,13 @@ def get_norm_module():
 
 
 def rmsnorm(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    eps: float = 1e-6,
-    out: Optional[torch.Tensor] = None,
+    input: paddle.Tensor,
+    weight: paddle.Tensor,
+    eps: float = 1e-06,
+    out: Optional[paddle.Tensor] = None,
     enable_pdl: Optional[bool] = None,
-) -> torch.Tensor:
-    r"""Root mean square normalization.
+) -> paddle.Tensor:
+    """Root mean square normalization.
 
     ``out[i] = (input[i] / RMS(input)) * weight[i]``
 
@@ -71,31 +70,31 @@ def rmsnorm(
         Normalized tensor, shape (batch_size, hidden_size).
     """
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
+        enable_pdl = device_support_pdl(input.place)
     if out is None:
-        out = torch.empty_like(input)
+        out = paddle.empty_like(x=input)
     _rmsnorm(out, input, weight, eps, enable_pdl)
     return out
 
 
 @register_custom_op("flashinfer::rmsnorm", mutates_args=("out",))
 def _rmsnorm(
-    out: torch.Tensor,
-    input: torch.Tensor,
-    weight: torch.Tensor,
+    out: paddle.Tensor,
+    input: paddle.Tensor,
+    weight: paddle.Tensor,
     eps: float,
     enable_pdl: Optional[bool],
 ) -> None:
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
+        enable_pdl = device_support_pdl(input.place)
     get_norm_module().rmsnorm(out, input, weight, eps, enable_pdl)
 
 
 @register_fake_op("flashinfer::rmsnorm")
 def _rmsnorm_fake(
-    out: torch.Tensor,
-    input: torch.Tensor,
-    weight: torch.Tensor,
+    out: paddle.Tensor,
+    input: paddle.Tensor,
+    weight: paddle.Tensor,
     eps: float,
     enable_pdl: Optional[bool],
 ) -> None:
@@ -104,13 +103,13 @@ def _rmsnorm_fake(
 
 @register_custom_op("flashinfer::fused_add_rmsnorm", mutates_args=("input", "residual"))
 def fused_add_rmsnorm(
-    input: torch.Tensor,
-    residual: torch.Tensor,
-    weight: torch.Tensor,
-    eps: float = 1e-6,
+    input: paddle.Tensor,
+    residual: paddle.Tensor,
+    weight: paddle.Tensor,
+    eps: float = 1e-06,
     enable_pdl: Optional[bool] = None,
 ) -> None:
-    r"""Fused add root mean square normalization.
+    """Fused add root mean square normalization.
 
     Step 1:
     ``residual[i] += input[i]``
@@ -133,29 +132,29 @@ def fused_add_rmsnorm(
         <https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#programmatic-dependent-launch-and-synchronization>`_
     """
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
+        enable_pdl = device_support_pdl(input.place)
     get_norm_module().fused_add_rmsnorm(input, residual, weight, eps, enable_pdl)
 
 
 @register_fake_op("flashinfer::fused_add_rmsnorm")
 def _fused_add_rmsnorm_fake(
-    input: torch.Tensor,
-    residual: torch.Tensor,
-    weight: torch.Tensor,
-    eps: float = 1e-6,
+    input: paddle.Tensor,
+    residual: paddle.Tensor,
+    weight: paddle.Tensor,
+    eps: float = 1e-06,
     enable_pdl: Optional[bool] = None,
 ) -> None:
     pass
 
 
 def gemma_rmsnorm(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    eps: float = 1e-6,
-    out: Optional[torch.Tensor] = None,
+    input: paddle.Tensor,
+    weight: paddle.Tensor,
+    eps: float = 1e-06,
+    out: Optional[paddle.Tensor] = None,
     enable_pdl: Optional[bool] = None,
-) -> torch.Tensor:
-    r"""Gemma-style root mean square normalization.
+) -> paddle.Tensor:
+    """Gemma-style root mean square normalization.
 
     ``out[i] = (input[i] / RMS(input)) * (weight[i] + 1)``
 
@@ -179,31 +178,31 @@ def gemma_rmsnorm(
         Gemma Normalized tensor, shape (batch_size, hidden_size).
     """
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
+        enable_pdl = device_support_pdl(input.place)
     if out is None:
-        out = torch.empty_like(input)
+        out = paddle.empty_like(x=input)
     _gemma_rmsnorm(out, input, weight, eps, enable_pdl)
     return out
 
 
 @register_custom_op("flashinfer::gemma_rmsnorm", mutates_args=("out",))
 def _gemma_rmsnorm(
-    out: torch.Tensor,
-    input: torch.Tensor,
-    weight: torch.Tensor,
+    out: paddle.Tensor,
+    input: paddle.Tensor,
+    weight: paddle.Tensor,
     eps: float,
     enable_pdl: Optional[bool],
 ) -> None:
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
+        enable_pdl = device_support_pdl(input.place)
     get_norm_module().gemma_rmsnorm(out, input, weight, eps, enable_pdl)
 
 
 @register_fake_op("flashinfer::gemma_rmsnorm")
 def _gemma_rmsnorm_fake(
-    out: torch.Tensor,
-    input: torch.Tensor,
-    weight: torch.Tensor,
+    out: paddle.Tensor,
+    input: paddle.Tensor,
+    weight: paddle.Tensor,
     eps: float,
     enable_pdl: Optional[bool],
 ) -> None:
@@ -214,13 +213,13 @@ def _gemma_rmsnorm_fake(
     "flashinfer::gemma_fused_add_rmsnorm", mutates_args=("input", "residual")
 )
 def gemma_fused_add_rmsnorm(
-    input: torch.Tensor,
-    residual: torch.Tensor,
-    weight: torch.Tensor,
-    eps: float = 1e-6,
+    input: paddle.Tensor,
+    residual: paddle.Tensor,
+    weight: paddle.Tensor,
+    eps: float = 1e-06,
     enable_pdl: Optional[bool] = None,
 ) -> None:
-    r"""Gemma-style fused add root mean square normalization.
+    """Gemma-style fused add root mean square normalization.
 
     Step 1:
     ``residual[i] += input[i]``
@@ -243,16 +242,16 @@ def gemma_fused_add_rmsnorm(
         <https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#programmatic-dependent-launch-and-synchronization>`_
     """
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
+        enable_pdl = device_support_pdl(input.place)
     get_norm_module().gemma_fused_add_rmsnorm(input, residual, weight, eps, enable_pdl)
 
 
 @register_fake_op("flashinfer::gemma_fused_add_rmsnorm")
 def _gemma_fused_add_rmsnorm_fake(
-    input: torch.Tensor,
-    residual: torch.Tensor,
-    weight: torch.Tensor,
-    eps: float = 1e-6,
+    input: paddle.Tensor,
+    residual: paddle.Tensor,
+    weight: paddle.Tensor,
+    eps: float = 1e-06,
     enable_pdl: Optional[bool] = None,
 ) -> None:
     pass

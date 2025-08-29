@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,11 +19,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from typing import Optional, Tuple
-
-import torch
 
 from .jit import JitSpec
 from .jit import env as jit_env
@@ -42,12 +45,12 @@ def get_rope_module():
 
 @register_custom_op("flashinfer::apply_rope", mutates_args=("q_rope", "k_rope"))
 def _apply_rope(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    indptr: torch.Tensor,
-    offsets: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    indptr: paddle.Tensor,
+    offsets: paddle.Tensor,
     rotary_dim: int,
     interleave: bool,
     rope_scale: float,
@@ -69,12 +72,12 @@ def _apply_rope(
 
 @register_fake_op("flashinfer::apply_rope")
 def _fake_apply_rope(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    indptr: torch.Tensor,
-    offsets: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    indptr: paddle.Tensor,
+    offsets: paddle.Tensor,
     rotary_dim: int,
     interleave: bool,
     rope_scale: float,
@@ -85,12 +88,12 @@ def _fake_apply_rope(
 
 @register_custom_op("flashinfer::apply_llama31_rope", mutates_args=("q_rope", "k_rope"))
 def _apply_llama31_rope(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    indptr: torch.Tensor,
-    offsets: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    indptr: paddle.Tensor,
+    offsets: paddle.Tensor,
     rotary_dim: int,
     interleave: bool,
     rope_scale: float,
@@ -118,12 +121,12 @@ def _apply_llama31_rope(
 
 @register_fake_op("flashinfer::apply_llama31_rope")
 def _fake_apply_llama31_rope(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    indptr: torch.Tensor,
-    offsets: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    indptr: paddle.Tensor,
+    offsets: paddle.Tensor,
     rotary_dim: int,
     interleave: bool,
     rope_scale: float,
@@ -137,36 +140,28 @@ def _fake_apply_llama31_rope(
 
 @register_custom_op("flashinfer::apply_rope_pos_ids", mutates_args=("q_rope", "k_rope"))
 def _apply_rope_pos_ids(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     rotary_dim: int,
     interleave: bool,
     rope_scale: float,
     rope_theta: float,
 ) -> None:
     get_rope_module().apply_rope_pos_ids(
-        q,
-        k,
-        q_rope,
-        k_rope,
-        pos_ids,
-        rotary_dim,
-        interleave,
-        rope_scale,
-        rope_theta,
+        q, k, q_rope, k_rope, pos_ids, rotary_dim, interleave, rope_scale, rope_theta
     )
 
 
 @register_fake_op("flashinfer::apply_rope_pos_ids")
 def _fake_apply_rope_pos_ids(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     rotary_dim: int,
     interleave: bool,
     rope_scale: float,
@@ -180,16 +175,16 @@ def _fake_apply_rope_pos_ids(
     mutates_args=("q_rope_out", "k_rope_out", "q_nope_out", "k_nope_out"),
 )
 def _mla_rope_quantize(
-    q_rope_in: torch.Tensor,
-    k_rope_in: torch.Tensor,
-    q_nope_in: torch.Tensor,
-    k_nope_in: torch.Tensor,
-    cos_sin_cache: torch.Tensor,
-    pos_ids: torch.Tensor,
-    q_rope_out: torch.Tensor,
-    k_rope_out: torch.Tensor,
-    q_nope_out: torch.Tensor,
-    k_nope_out: torch.Tensor,
+    q_rope_in: paddle.Tensor,
+    k_rope_in: paddle.Tensor,
+    q_nope_in: paddle.Tensor,
+    k_nope_in: paddle.Tensor,
+    cos_sin_cache: paddle.Tensor,
+    pos_ids: paddle.Tensor,
+    q_rope_out: paddle.Tensor,
+    k_rope_out: paddle.Tensor,
+    q_nope_out: paddle.Tensor,
+    k_nope_out: paddle.Tensor,
     quant_scale_q: float,
     quant_scale_kv: float,
     interleave: bool,
@@ -213,16 +208,16 @@ def _mla_rope_quantize(
 
 @register_fake_op("flashinfer::mla_rope_quantize")
 def _fake_mla_rope_quantize(
-    q_rope_in: torch.Tensor,
-    k_rope_in: torch.Tensor,
-    q_nope_in: torch.Tensor,
-    k_nope_in: torch.Tensor,
-    cos_sin_cache: torch.Tensor,
-    pos_ids: torch.Tensor,
-    q_rope_out: torch.Tensor,
-    k_rope_out: torch.Tensor,
-    q_nope_out: torch.Tensor,
-    k_nope_out: torch.Tensor,
+    q_rope_in: paddle.Tensor,
+    k_rope_in: paddle.Tensor,
+    q_nope_in: paddle.Tensor,
+    k_nope_in: paddle.Tensor,
+    cos_sin_cache: paddle.Tensor,
+    pos_ids: paddle.Tensor,
+    q_rope_out: paddle.Tensor,
+    k_rope_out: paddle.Tensor,
+    q_nope_out: paddle.Tensor,
+    k_nope_out: paddle.Tensor,
     quant_scale_q: float,
     quant_scale_kv: float,
     interleave: bool,
@@ -234,34 +229,28 @@ def _fake_mla_rope_quantize(
     "flashinfer::apply_rope_pos_ids_cos_sin_cache", mutates_args=("q_rope", "k_rope")
 )
 def _apply_rope_pos_ids_cos_sin_cache(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    cos_sin_cache: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    cos_sin_cache: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     interleave: bool,
 ) -> None:
     get_rope_module().apply_rope_pos_ids_cos_sin_cache(
-        q,
-        k,
-        q_rope,
-        k_rope,
-        cos_sin_cache,
-        pos_ids,
-        interleave,
+        q, k, q_rope, k_rope, cos_sin_cache, pos_ids, interleave
     )
 
 
 @register_fake_op("flashinfer::apply_rope_pos_ids_cos_sin_cache")
 def _fake_apply_rope_pos_ids_cos_sin_cache(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    cos_cache: torch.Tensor,
-    sin_cache: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    cos_cache: paddle.Tensor,
+    sin_cache: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     interleave: bool,
 ) -> None:
     pass
@@ -271,11 +260,11 @@ def _fake_apply_rope_pos_ids_cos_sin_cache(
     "flashinfer::apply_llama31_rope_pos_ids", mutates_args=("q_rope", "k_rope")
 )
 def _apply_llama31_rope_pos_ids(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     rotary_dim: int,
     interleave: bool,
     rope_scale: float,
@@ -302,11 +291,11 @@ def _apply_llama31_rope_pos_ids(
 
 @register_fake_op("flashinfer::apply_llama31_rope_pos_ids")
 def _fake_apply_llama31_rope_pos_ids(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     rotary_dim: int,
     interleave: bool,
     rope_scale: float,
@@ -319,16 +308,16 @@ def _fake_apply_llama31_rope_pos_ids(
 
 
 def apply_rope_inplace(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    indptr: torch.Tensor,
-    offsets: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    indptr: paddle.Tensor,
+    offsets: paddle.Tensor,
     rotary_dim: Optional[int] = None,
     interleave: bool = False,
     rope_scale: float = 1,
-    rope_theta: float = 1e4,
+    rope_theta: float = 10000.0,
 ) -> None:
-    r"""Apply rotary embedding to a batch of queries/keys (stored as RaggedTensor) inplace.
+    """Apply rotary embedding to a batch of queries/keys (stored as RaggedTensor) inplace.
     cos/sin values are computed on the fly inside the kernel.
 
     We use :attr:`indptr` to denote the start pointer of each segment in the batch, the i-th
@@ -399,22 +388,22 @@ def apply_rope_inplace(
     apply_rope
     """
     if rotary_dim is None:
-        rotary_dim = q.size(-1)
+        rotary_dim = q.shape[-1]
     _apply_rope(
         q, k, q, k, indptr, offsets, rotary_dim, interleave, rope_scale, rope_theta
     )
 
 
 def apply_rope_pos_ids_inplace(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     rotary_dim: Optional[int] = None,
     interleave: bool = False,
     rope_scale: float = 1,
-    rope_theta: float = 1e4,
+    rope_theta: float = 10000.0,
 ) -> None:
-    r"""Apply rotary embedding to a batch of queries/keys (stored as RaggedTensor) inplace.
+    """Apply rotary embedding to a batch of queries/keys (stored as RaggedTensor) inplace.
     cos/sin values are computed on the fly inside the kernel.
 
     We use :attr:`indptr` to denote the start pointer of each segment in the batch, the i-th
@@ -457,26 +446,26 @@ def apply_rope_pos_ids_inplace(
     apply_rope_pos_ids
     """
     if rotary_dim is None:
-        rotary_dim = q.size(-1)
+        rotary_dim = q.shape[-1]
     _apply_rope_pos_ids(
         q, k, q, k, pos_ids, rotary_dim, interleave, rope_scale, rope_theta
     )
 
 
 def apply_llama31_rope_inplace(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    indptr: torch.Tensor,
-    offsets: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    indptr: paddle.Tensor,
+    offsets: paddle.Tensor,
     rotary_dim: Optional[int] = None,
     interleave: bool = False,
     rope_scale: float = 8,
-    rope_theta: float = 5e5,
+    rope_theta: float = 500000.0,
     low_freq_factor: float = 1,
     high_freq_factor: float = 4,
     old_context_len: int = 8192,
 ) -> None:
-    r"""Apply Llama 3.1 style rotary embedding to a batch of queries/keys (stored as
+    """Apply Llama 3.1 style rotary embedding to a batch of queries/keys (stored as
     RaggedTensor) inplace. cos/sin values are computed on the fly inside the kernel.
 
     We use :attr:`indptr` to denote the start pointer of each segment in the batch, the i-th
@@ -553,7 +542,7 @@ def apply_llama31_rope_inplace(
     apply_llama31_rope
     """
     if rotary_dim is None:
-        rotary_dim = q.size(-1)
+        rotary_dim = q.shape[-1]
     _apply_llama31_rope(
         q,
         k,
@@ -572,18 +561,18 @@ def apply_llama31_rope_inplace(
 
 
 def apply_llama31_rope_pos_ids_inplace(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     rotary_dim: Optional[int] = None,
     interleave: bool = False,
     rope_scale: float = 8,
-    rope_theta: float = 5e5,
+    rope_theta: float = 500000.0,
     low_freq_factor: float = 1,
     high_freq_factor: float = 4,
     old_context_len: int = 8192,
 ) -> None:
-    r"""Apply Llama 3.1 style rotary embedding to a batch of queries/keys (stored as
+    """Apply Llama 3.1 style rotary embedding to a batch of queries/keys (stored as
     RaggedTensor) inplace. cos/sin values are computed on the fly inside the kernel.
 
     We use :attr:`indptr` to denote the start pointer of each segment in the batch, the i-th
@@ -632,7 +621,7 @@ def apply_llama31_rope_pos_ids_inplace(
     apply_llama31_rope_pos_ids
     """
     if rotary_dim is None:
-        rotary_dim = q.size(-1)
+        rotary_dim = q.shape[-1]
     _apply_llama31_rope_pos_ids(
         q,
         k,
@@ -650,16 +639,16 @@ def apply_llama31_rope_pos_ids_inplace(
 
 
 def apply_rope(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    indptr: torch.Tensor,
-    offsets: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    indptr: paddle.Tensor,
+    offsets: paddle.Tensor,
     rotary_dim: Optional[int] = None,
     interleave: bool = False,
     rope_scale: float = 1,
-    rope_theta: float = 1e4,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""Apply rotary embedding to a batch of queries/keys (stored as RaggedTensor).
+    rope_theta: float = 10000.0,
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    """Apply rotary embedding to a batch of queries/keys (stored as RaggedTensor).
     cos/sin values are computed on the fly inside the kernel.
 
     We use :attr:`indptr` to denote the start pointer of each segment in the batch, the i-th
@@ -740,10 +729,10 @@ def apply_rope(
     --------
     apply_rope_inplace
     """
-    q_rope = torch.empty_like(q)
-    k_rope = torch.empty_like(k)
+    q_rope = paddle.empty_like(x=q)
+    k_rope = paddle.empty_like(x=k)
     if rotary_dim is None:
-        rotary_dim = q.size(-1)
+        rotary_dim = q.shape[-1]
     _apply_rope(
         q,
         k,
@@ -760,15 +749,15 @@ def apply_rope(
 
 
 def apply_rope_pos_ids(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     rotary_dim: Optional[int] = None,
     interleave: bool = False,
     rope_scale: float = 1,
-    rope_theta: float = 1e4,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""Apply rotary embedding to a batch of queries/keys (stored as RaggedTensor).
+    rope_theta: float = 10000.0,
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    """Apply rotary embedding to a batch of queries/keys (stored as RaggedTensor).
     cos/sin values are computed on the fly inside the kernel.
 
     We use :attr:`indptr` to denote the start pointer of each segment in the batch, the i-th
@@ -817,10 +806,10 @@ def apply_rope_pos_ids(
     --------
     apply_rope_inplace
     """
-    q_rope = torch.empty_like(q)
-    k_rope = torch.empty_like(k)
+    q_rope = paddle.empty_like(x=q)
+    k_rope = paddle.empty_like(x=k)
     if rotary_dim is None:
-        rotary_dim = q.size(-1)
+        rotary_dim = q.shape[-1]
     _apply_rope_pos_ids(
         q, k, q_rope, k_rope, pos_ids, rotary_dim, interleave, rope_scale, rope_theta
     )
@@ -828,19 +817,19 @@ def apply_rope_pos_ids(
 
 
 def apply_llama31_rope(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    indptr: torch.Tensor,
-    offsets: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    indptr: paddle.Tensor,
+    offsets: paddle.Tensor,
     rotary_dim: Optional[int] = None,
     interleave: bool = False,
     rope_scale: float = 8,
-    rope_theta: float = 5e5,
+    rope_theta: float = 500000.0,
     low_freq_factor: float = 1,
     high_freq_factor: float = 4,
     old_context_len: int = 8192,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""Apply Llama 3.1 style rotary embedding to a batch of queries/keys (stored as
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    """Apply Llama 3.1 style rotary embedding to a batch of queries/keys (stored as
     RaggedTensor). cos/sin values are computed on the fly inside the kernel.
 
     We use :attr:`indptr` to denote the start pointer of each segment in the batch, the i-th
@@ -927,10 +916,10 @@ def apply_llama31_rope(
     --------
     apply_llama31_rope_inplace
     """
-    q_rope = torch.empty_like(q)
-    k_rope = torch.empty_like(k)
+    q_rope = paddle.empty_like(x=q)
+    k_rope = paddle.empty_like(x=k)
     if rotary_dim is None:
-        rotary_dim = q.size(-1)
+        rotary_dim = q.shape[-1]
     _apply_llama31_rope(
         q,
         k,
@@ -950,18 +939,18 @@ def apply_llama31_rope(
 
 
 def apply_llama31_rope_pos_ids(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     rotary_dim: Optional[int] = None,
     interleave: bool = False,
     rope_scale: float = 8,
-    rope_theta: float = 5e5,
+    rope_theta: float = 500000.0,
     low_freq_factor: float = 1,
     high_freq_factor: float = 4,
     old_context_len: int = 8192,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""Apply Llama 3.1 style rotary embedding to a batch of queries/keys (stored as
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    """Apply Llama 3.1 style rotary embedding to a batch of queries/keys (stored as
     RaggedTensor). cos/sin values are computed on the fly inside the kernel.
 
     We use :attr:`indptr` to denote the start pointer of each segment in the batch, the i-th
@@ -1015,10 +1004,10 @@ def apply_llama31_rope_pos_ids(
     --------
     apply_llama31_rope_pos_ids_inplace
     """
-    q_rope = torch.empty_like(q)
-    k_rope = torch.empty_like(k)
+    q_rope = paddle.empty_like(x=q)
+    k_rope = paddle.empty_like(x=k)
     if rotary_dim is None:
-        rotary_dim = q.size(-1)
+        rotary_dim = q.shape[-1]
     _apply_llama31_rope_pos_ids(
         q,
         k,
@@ -1037,14 +1026,14 @@ def apply_llama31_rope_pos_ids(
 
 
 def apply_rope_with_cos_sin_cache(
-    positions: torch.Tensor,
-    query: torch.Tensor,
-    key: torch.Tensor,
+    positions: paddle.Tensor,
+    query: paddle.Tensor,
+    key: paddle.Tensor,
     head_size: int,
-    cos_sin_cache: torch.Tensor,
+    cos_sin_cache: paddle.Tensor,
     is_neox: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    r"""
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
+    """
     Apply rotary embedding to keys and queries with precomputed cos/sin values.
     This is designed to be compatible with the SGL/vLLM implementation.
 
@@ -1080,34 +1069,31 @@ def apply_rope_with_cos_sin_cache(
     ----
     The rotary dimension is determined by the cosine cache and sine cache.
     """
-    if cos_sin_cache.dtype != torch.float32:
+    if cos_sin_cache.dtype != "float32":
         raise ValueError("cos_sin_cache should be float32")
-
-    query_out = torch.empty_like(query)
-    key_out = torch.empty_like(key)
-
+    query_out = paddle.empty_like(x=query)
+    key_out = paddle.empty_like(x=key)
     _apply_rope_pos_ids_cos_sin_cache(
-        q=query.view(query.shape[0], -1, head_size),
-        k=key.view(key.shape[0], -1, head_size),
-        q_rope=query_out.view(query_out.shape[0], -1, head_size),
-        k_rope=key_out.view(key_out.shape[0], -1, head_size),
+        q=query.view(tuple(query.shape)[0], -1, head_size),
+        k=key.view(tuple(key.shape)[0], -1, head_size),
+        q_rope=query_out.view(tuple(query_out.shape)[0], -1, head_size),
+        k_rope=key_out.view(tuple(key_out.shape)[0], -1, head_size),
         cos_sin_cache=cos_sin_cache,
         pos_ids=positions,
-        interleave=(not is_neox),
+        interleave=not is_neox,
     )
-
     return query_out, key_out
 
 
 def apply_rope_with_cos_sin_cache_inplace(
-    positions: torch.Tensor,
-    query: torch.Tensor,
-    key: torch.Tensor,
+    positions: paddle.Tensor,
+    query: paddle.Tensor,
+    key: paddle.Tensor,
     head_size: int,
-    cos_sin_cache: torch.Tensor,
+    cos_sin_cache: paddle.Tensor,
     is_neox: bool = True,
 ) -> None:
-    r"""
+    """
     Apply rotary embedding to keys and queries with precomputed cos/sin values.
     This is designed to be compatible with the SGL/vLLM implementation.
     The result is inplace applied to the input tensors.
@@ -1136,71 +1122,64 @@ def apply_rope_with_cos_sin_cache_inplace(
     ----
     The rotary dimension is determined by the cosine cache and sine cache.
     """
-    if cos_sin_cache.dtype != torch.float32:
+    if cos_sin_cache.dtype != "float32":
         raise ValueError("cos_sin_cache should be float32")
-
-    # pass q_rope and k_rope as q and k to perform inplace operation
     _apply_rope_pos_ids_cos_sin_cache(
-        q=query.view(query.shape[0], -1, head_size),
-        k=key.view(key.shape[0], -1, head_size),
-        q_rope=query.view(query.shape[0], -1, head_size),
-        k_rope=key.view(key.shape[0], -1, head_size),
+        q=query.view(tuple(query.shape)[0], -1, head_size),
+        k=key.view(tuple(key.shape)[0], -1, head_size),
+        q_rope=query.view(tuple(query.shape)[0], -1, head_size),
+        k_rope=key.view(tuple(key.shape)[0], -1, head_size),
         cos_sin_cache=cos_sin_cache,
         pos_ids=positions,
-        interleave=(not is_neox),
+        interleave=not is_neox,
     )
 
 
 def mla_rope_quantize_fp8(
-    q_rope: torch.Tensor,
-    k_rope: torch.Tensor,
-    q_nope: torch.Tensor,
-    k_nope: torch.Tensor,
-    cos_sin_cache: torch.Tensor,
-    pos_ids: torch.Tensor,
+    q_rope: paddle.Tensor,
+    k_rope: paddle.Tensor,
+    q_nope: paddle.Tensor,
+    k_nope: paddle.Tensor,
+    cos_sin_cache: paddle.Tensor,
+    pos_ids: paddle.Tensor,
     is_neox: bool = True,
-    quantize_dtype: Optional[torch.dtype] = None,
+    quantize_dtype: Optional[paddle.dtype] = None,
     quant_scale_q: float = 1.0,
     quant_scale_kv: float = 1.0,
-    q_rope_out: Optional[torch.Tensor] = None,
-    k_rope_out: Optional[torch.Tensor] = None,
-    q_nope_out: Optional[torch.Tensor] = None,
-    k_nope_out: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    if cos_sin_cache.dtype != torch.float32:
+    q_rope_out: Optional[paddle.Tensor] = None,
+    k_rope_out: Optional[paddle.Tensor] = None,
+    q_nope_out: Optional[paddle.Tensor] = None,
+    k_nope_out: Optional[paddle.Tensor] = None,
+) -> Tuple[paddle.Tensor, paddle.Tensor, paddle.Tensor, paddle.Tensor]:
+    if cos_sin_cache.dtype != "float32":
         raise ValueError("cos_sin_cache should be float32")
-
-    # Infer quantize_dtype from output tensors or default to float8_e4m3fn
     if quantize_dtype is None:
         for out in (q_rope_out, k_rope_out, q_nope_out, k_nope_out):
             if out is not None:
                 quantize_dtype = out.dtype
                 break
         else:
-            quantize_dtype = torch.float8_e4m3fn
-
-    # Allocate output tensors if not provided
+>>>>>>            quantize_dtype = torch.float8_e4m3fn
     q_rope_out = (
         q_rope_out
         if q_rope_out is not None
-        else torch.empty_like(q_rope, dtype=quantize_dtype)
+        else paddle.empty_like(x=q_rope, dtype=quantize_dtype)
     )
     k_rope_out = (
         k_rope_out
         if k_rope_out is not None
-        else torch.empty_like(k_rope, dtype=quantize_dtype)
+        else paddle.empty_like(x=k_rope, dtype=quantize_dtype)
     )
     q_nope_out = (
         q_nope_out
         if q_nope_out is not None
-        else torch.empty_like(q_nope, dtype=quantize_dtype)
+        else paddle.empty_like(x=q_nope, dtype=quantize_dtype)
     )
     k_nope_out = (
         k_nope_out
         if k_nope_out is not None
-        else torch.empty_like(k_nope, dtype=quantize_dtype)
+        else paddle.empty_like(x=k_nope, dtype=quantize_dtype)
     )
-
     _mla_rope_quantize(
         q_rope,
         k_rope,
@@ -1214,7 +1193,6 @@ def mla_rope_quantize_fp8(
         k_nope_out,
         quant_scale_q,
         quant_scale_kv,
-        not is_neox,  # interleave
+        not is_neox,
     )
-
     return q_rope_out, k_rope_out, q_nope_out, k_nope_out

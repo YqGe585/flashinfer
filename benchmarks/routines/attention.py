@@ -1,21 +1,20 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
 from collections import defaultdict
 
 import numpy as np
-import torch
+import paddle
+from paddle_utils import *
 
 import flashinfer
 from flashinfer.testing.utils import (
     attention_tb_per_sec_with_actual_seq_lens,
-    attention_tflops_per_sec_with_actual_seq_lens,
-    bench_gpu_time,
-    bench_gpu_time_with_cudagraph,
-)
+    attention_tflops_per_sec_with_actual_seq_lens, bench_gpu_time,
+    bench_gpu_time_with_cudagraph)
 
-from .flashinfer_benchmark_utils import (
-    dtype_str_to_torch_dtype,
-    get_device,
-    print_perf_metrics,
-)
+from .flashinfer_benchmark_utils import (dtype_str_to_torch_dtype, get_device,
+                                         print_perf_metrics)
 
 
 def run_attention_test(args):
@@ -147,10 +146,9 @@ def parse_attention_args(line, parser):
         default=False,
         help="Use random actual sequence lengths for the query and key and value. Random values are generated between 1 and maximum sequence length. If False, use maximum sequence length.",
     )
-
     args = parser.parse_args(line)
     if args.verbose >= 1:
-        print(f"[INFO] {args = }")
+        print(f"[INFO] args = {args!r}")
     return args
 
 
@@ -170,12 +168,12 @@ def sample_actual_seq_lens(max_seqlen, batch_size, device, random_actual_seq_len
         actual_seq_lens: Actual sequence lengths for each batch.
     """
     if random_actual_seq_len:
-        actual_seq_lens = torch.randint(
-            1, max_seqlen + 1, (batch_size, 1, 1, 1), device=device, dtype=torch.int32
+        actual_seq_lens = paddle.randint(
+            low=1, high=max_seqlen + 1, shape=(batch_size, 1, 1, 1), dtype="int32"
         )
     else:
-        actual_seq_lens = torch.full(
-            (batch_size, 1, 1, 1), max_seqlen, device=device, dtype=torch.int32
+        actual_seq_lens = paddle.full(
+            shape=(batch_size, 1, 1, 1), fill_value=max_seqlen, dtype="int32"
         )
     return actual_seq_lens
 
@@ -200,30 +198,21 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
     if args.verbose >= 1:
         print("[INFO] Running testBatchDecodeWithPagedKVCacheWrapper")
         print(f"[INFO] FlashInfer version: {flashinfer.__version__}")
-
-    # Basic setup
     device = get_device(args)
     if args.generate_repro_command:
         print(
             f"[INFO] To reproduce this test case, run the following command: {args.repro_command}"
         )
-
-    q_init_dtype = torch.bfloat16
-    kv_init_dtype = torch.bfloat16
-    rtol = 2e-1
-    atol = 1e-2
-
-    # Handle different query data types.
+    q_init_dtype = "bfloat16"
+    kv_init_dtype = "bfloat16"
+    rtol = 0.2
+    atol = 0.01
     q_dtype = dtype_str_to_torch_dtype(args.q_dtype)
-    if q_dtype not in [torch.bfloat16, torch.float8_e4m3fn]:
+>>>>>>    if q_dtype not in ["bfloat16", torch.float8_e4m3fn]:
         raise ValueError(f"Unsupported q_dtype: {args.q_dtype}")
-
-    # Handle different KV cache data types.
     kv_dtype = dtype_str_to_torch_dtype(args.kv_dtype)
-    if kv_dtype not in [torch.bfloat16, torch.float8_e4m3fn]:
+>>>>>>    if kv_dtype not in ["bfloat16", torch.float8_e4m3fn]:
         raise ValueError(f"Unsupported kv_dtype: {args.kv_dtype}")
-
-    # Parse and validate backend configurations
     backends = args.backends
     page_size = args.page_size
     batch_size = args.batch_size
@@ -234,15 +223,10 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
     head_dim_qk = args.head_dim_qk
     head_dim_vo = args.head_dim_vo
     is_cuda_graph_compatible = not args.no_cuda_graph
-    # return_lse = not args.no_lse # TO-DO: Add support for this
     run_refcheck = args.refcheck
-
-    # Derived parameters
     if "fa2" in backends:
         remove_fa2 = False
-        head_grp_size = (
-            num_qo_heads // num_kv_heads
-        )  # If 5, FA2 backend is not supported.
+        head_grp_size = num_qo_heads // num_kv_heads
         if head_grp_size == 5:
             print(
                 "[INFO] FA2 backend is not supported for this configuration. Skipping."
@@ -250,81 +234,57 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
             remove_fa2 = True
         if remove_fa2:
             backends.remove("fa2")
-
     if "fa2_tc" in backends:
         remove_fa2_tc = False
-        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
+>>>>>>        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
+>>>>>>            torch.float8_e4m3fn,
+>>>>>>            torch.float8_e5m2,
         ]:
             print("[INFO] FA2_TC backend does not support FP8. Skipping.")
             remove_fa2_tc = True
         if remove_fa2_tc:
             backends.remove("fa2_tc")
-
     if "cudnn" in backends:
         remove_cudnn = False
-        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
+>>>>>>        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
+>>>>>>            torch.float8_e4m3fn,
+>>>>>>            torch.float8_e5m2,
         ]:
             print("[INFO] cuDNN backend does not support FP8. Skipping.")
             remove_cudnn = True
         if remove_cudnn:
             backends.remove("cudnn")
-
     if len(backends) == 0:
         print("[ERROR] No backends to test. Exiting.")
         return
-
-    # Storage for timing results and outputs
     backend_times = {backend: [] for backend in backends}
     outputs = {}
-
-    # Sample sequence lengths and create tensors
     actual_seq_lens_kv = sample_actual_seq_lens(
         s_kv, batch_size, device, args.random_actual_seq_len
     )
-    sum_seq_kv = torch.sum(actual_seq_lens_kv).item()
+    sum_seq_kv = paddle.sum(x=actual_seq_lens_kv).item()
     avg_seq_len_kv = sum_seq_kv // batch_size
-
     if args.verbose >= 1:
         print(f"[VERBOSE] Average actual seq len: {avg_seq_len_kv}")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {actual_seq_lens_kv.flatten() = }")
-
-    # Create query tensor
-    q = torch.rand(
-        batch_size, num_qo_heads, head_dim_qk, device=device, dtype=q_init_dtype
-    )
+        print(
+            f"[VVERBOSE] actual_seq_lens_kv.flatten() = {actual_seq_lens_kv.flatten()!r}"
+        )
+    q = paddle.rand(shape=[batch_size, num_qo_heads, head_dim_qk], dtype=q_init_dtype)
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {q.shape = }")
-
-    # Create KV cache
+        print(f"[VVERBOSE] q.shape = {tuple(q.shape)!r}")
     num_pages_per_seq = (s_kv + page_size - 1) // page_size
     total_num_pages = num_pages_per_seq * batch_size
-
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {num_pages_per_seq = }")
-        print(f"[VVERBOSE] {total_num_pages = }")
-
-    # Initialize KV cache with appropriate shape and stride
-    kv_cache_shape = (
-        total_num_pages,
-        2,  # 2 for key and value
-        num_kv_heads,
-        page_size,
-        head_dim_qk,
-    )
-    kv_cache = torch.randn(size=kv_cache_shape, dtype=kv_init_dtype).to(device)
-
-    # Keep a copy for TRT-LLM which uses different strides
+        print(f"[VVERBOSE] num_pages_per_seq = {num_pages_per_seq!r}")
+        print(f"[VVERBOSE] total_num_pages = {total_num_pages!r}")
+    kv_cache_shape = total_num_pages, 2, num_kv_heads, page_size, head_dim_qk
+    kv_cache = paddle.randn(shape=kv_cache_shape, dtype=kv_init_dtype).to(device)
     if "trtllm-gen" in backends:
         kv_cache_for_trt = kv_cache.detach().clone()
-
     kv_cache = kv_cache.as_strided(
-        kv_cache.shape,
-        (
+        shape=tuple(kv_cache.shape),
+        stride=(
             2 * page_size * num_kv_heads * head_dim_qk,
             page_size * num_kv_heads * head_dim_qk,
             head_dim_qk,
@@ -333,15 +293,11 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
         ),
     )
     k_cache_view, v_cache_view = kv_cache[:, 0, :, :, :], kv_cache[:, 1, :, :, :]
-
     if "trtllm-gen" in backends:
-        # kv_cache now has different tensor stride and logical values. Copy over values to kv_cache_for_trt.
-        # Result is kv_cache and kv_cache_for_trt have the same logical values but different tensor strides.
-        kv_cache_for_trt.copy_(kv_cache)
-
+        paddle.assign(kv_cache, output=kv_cache_for_trt)
     v_cache = v_cache_view.as_strided(
-        v_cache_view.shape,
-        (
+        shape=tuple(v_cache_view.shape),
+        stride=(
             2 * page_size * num_kv_heads * head_dim_qk,
             head_dim_qk,
             num_kv_heads * head_dim_qk,
@@ -349,76 +305,65 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
         ),
     )
     k_cache = k_cache_view.as_strided(
-        k_cache_view.shape,
-        (
+        shape=tuple(k_cache_view.shape),
+        stride=(
             2 * page_size * num_kv_heads * head_dim_qk,
             head_dim_qk,
             num_kv_heads * head_dim_qk,
             1,
         ),
     )
-
-    # Now initialize the page tables
-    block_tables = torch.tensor(
-        [
-            [k + i * num_pages_per_seq for k in range(num_pages_per_seq)]
+    block_tables = paddle.to_tensor(
+        data=[
+            [(k + i * num_pages_per_seq) for k in range(num_pages_per_seq)]
             for i in range(batch_size)
         ],
-        dtype=torch.int,
-        device=device,
+        dtype="int32",
+        place=device,
     )
-
     kv_indptr = (
-        torch.cat(
-            [
-                torch.tensor([0], device=device),
-                torch.cumsum(
-                    (actual_seq_lens_kv.flatten() + page_size - 1) // page_size, dim=0
+        paddle.concat(
+            x=[
+                paddle.to_tensor(data=[0], place=device),
+                paddle.cumsum(
+                    x=(actual_seq_lens_kv.flatten() + page_size - 1) // page_size,
+                    axis=0,
                 ),
             ]
         )
-        .int()
+        .astype(dtype="int32")
         .to(device)
     )
-
-    # kv_indices[-1] is the total number of actual pages
-    kv_indices = torch.zeros(kv_indptr[-1], device=device, dtype=torch.int32)
+    kv_indices = paddle.zeros(shape=kv_indptr[-1], dtype="int32")
     for i in range(len(kv_indptr) - 1):
         start_idx = kv_indptr[i]
         end_idx = kv_indptr[i + 1]
-        kv_indices[start_idx:end_idx] = torch.arange(
-            i * num_pages_per_seq,
-            i * num_pages_per_seq + (end_idx - start_idx),
-            device=device,
+        kv_indices[start_idx:end_idx] = paddle.arange(
+            start=i * num_pages_per_seq,
+            end=i * num_pages_per_seq + (end_idx - start_idx),
         )
-
     kv_last_page_len = (
-        torch.where(
-            actual_seq_lens_kv.flatten() % page_size == 0,
-            torch.full((batch_size,), page_size, device=device),
-            actual_seq_lens_kv.flatten() % page_size,
+        paddle.where(
+            condition=actual_seq_lens_kv.flatten() % page_size == 0,
+            x=paddle.full(shape=(batch_size,), fill_value=page_size),
+            y=actual_seq_lens_kv.flatten() % page_size,
         )
-        .int()
+        .astype(dtype="int32")
         .to(device)
     )
-
     ragged_q = (
-        torch.arange(0, batch_size + 1, device=device) * (num_qo_heads * head_dim_qk)
-    ).long()  # For cuDNN
-
-    scale = float(1.0 / (head_dim_qk**0.5))
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.int8, device=device)
-
+        paddle.arange(start=0, end=batch_size + 1) * (num_qo_heads * head_dim_qk)
+    ).astype(dtype="int64")
+    scale = float(1.0 / head_dim_qk**0.5)
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="int8")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {kv_cache.shape = }")
-        print(f"[VVERBOSE] {kv_cache.stride() = }")
-        print(f"[VVERBOSE] {block_tables.shape = }")
-        print(f"[VVERBOSE] {kv_indptr.shape = }")
-        print(f"[VVERBOSE] {kv_indices.shape = }")
-        print(f"[VVERBOSE] {kv_last_page_len.shape = }")
-        print(f"[VVERBOSE] {scale = }")
-
-    # Prepare wrappers
+        print(f"[VVERBOSE] kv_cache.shape = {tuple(kv_cache.shape)!r}")
+        print(f"[VVERBOSE] kv_cache.stride() = {kv_cache.get_strides()!r}")
+        print(f"[VVERBOSE] block_tables.shape = {tuple(block_tables.shape)!r}")
+        print(f"[VVERBOSE] kv_indptr.shape = {tuple(kv_indptr.shape)!r}")
+        print(f"[VVERBOSE] kv_indices.shape = {tuple(kv_indices.shape)!r}")
+        print(f"[VVERBOSE] kv_last_page_len.shape = {tuple(kv_last_page_len.shape)!r}")
+        print(f"[VVERBOSE] scale = {scale!r}")
     backend_wrappers = {}
     for backend in backends:
         if backend in ["fa2", "fa2_tc", "trtllm-gen"]:
@@ -429,7 +374,7 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
                 workspace_buffer,
                 "HND",
                 use_cuda_graph=is_cuda_graph_compatible,
-                use_tensor_cores=(backend != "fa2"),
+                use_tensor_cores=backend != "fa2",
                 paged_kv_indptr_buffer=plan_kv_indptr,
                 paged_kv_indices_buffer=kv_indices,
                 paged_kv_last_page_len_buffer=kv_last_page_len,
@@ -446,23 +391,21 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
                 q_data_type=q_dtype,
                 data_type=kv_dtype,
             )
-
-    ## If FP8, prepare
     k_scale, v_scale = None, None
-    if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
         q = q.to(q_dtype)
-    if kv_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
-        k_data, v_data = torch.chunk(kv_cache, 2, dim=1)
+>>>>>>    if kv_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+        k_data, v_data = paddle.chunk(x=kv_cache, chunks=2, axis=1)
         k_scale = k_data.amax().item() / 256
         v_scale = v_data.amax().item() / 256
         k_fp8 = (k_data / k_scale).to(kv_dtype)
         v_fp8 = (v_data / v_scale).to(kv_dtype)
-        kv_cache = torch.cat([k_fp8, v_fp8], dim=1)
+        kv_cache = paddle.concat(x=[k_fp8, v_fp8], axis=1)
         if "trtllm-gen" in backends:
-            k_data, v_data = torch.chunk(kv_cache_for_trt, 2, dim=1)
+            k_data, v_data = paddle.chunk(x=kv_cache_for_trt, chunks=2, axis=1)
             k_fp8 = (k_data / k_scale).to(kv_dtype)
             v_fp8 = (v_data / v_scale).to(kv_dtype)
-            kv_cache_for_trt = torch.cat([k_fp8, v_fp8], dim=1)
+            kv_cache_for_trt = paddle.concat(x=[k_fp8, v_fp8], axis=1)
 
     def run_backend_wrapper(backend):
         if backend in ["fa2", "fa2_tc", "trtllm-gen"]:
@@ -505,8 +448,6 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
             .detach()
         )
         has_reference_output = True
-
-    # Iterate over each backend:
     for cur_backend in backends:
         if run_refcheck:
             outputs[cur_backend] = run_backend_wrapper(cur_backend).detach()
@@ -531,24 +472,22 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
                 l2_flush_device=device,
                 sleep_after_run=False,
             )
-
-    # Perform reference check
     tested_backends = list(outputs.keys())
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 1:
         if run_refcheck and has_reference_output:
-            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
                 if args.verbose >= 2:
                     print(
                         "[VVERBOSE] Reference output is FP8. Converting to float32 for reference check."
                     )
-                reference_output = reference_output.to(torch.float32)
-                tested_outputs = [output.to(torch.float32) for output in tested_outputs]
+                reference_output = reference_output.to("float32")
+                tested_outputs = [output.to("float32") for output in tested_outputs]
             for i in range(len(tested_outputs)):
                 try:
-                    torch.testing.assert_close(
-                        reference_output, tested_outputs[i], rtol=rtol, atol=atol
-                    )
+                    assert paddle.allclose(
+                        x=reference_output, y=tested_outputs[i], rtol=rtol, atol=atol
+                    ).item(), ""
                 except AssertionError as e:
                     print(
                         f"[ERROR] Output tensor mismatch between backends {tested_backends[0]} and {tested_backends[i]}"
@@ -556,14 +495,13 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
                     if not args.allow_output_mismatch:
                         print(e)
                         raise
-    # Compute perf metrics
     res = []
     for backend in backends:
         if len(backend_times[backend]) > 0:
             median_time = np.median(backend_times[backend])
             std_time = np.std(backend_times[backend])
             actual_seq_lens_kv_flat = actual_seq_lens_kv.flatten().to("cpu")
-            actual_seq_lens_q_flat = torch.ones_like(actual_seq_lens_kv_flat)
+            actual_seq_lens_q_flat = paddle.ones_like(x=actual_seq_lens_kv_flat)
             tflops = attention_tflops_per_sec_with_actual_seq_lens(
                 actual_seq_lens_q_flat,
                 actual_seq_lens_kv_flat,
@@ -586,7 +524,6 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
                 o_dtype=q_dtype,
             )
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
-
             if args.output_path is not None:
                 cur_res = defaultdict(str)
                 cur_res["routine"] = args.routine
@@ -633,28 +570,21 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
     if args.verbose >= 1:
         print("[INFO] Running testBatchPrefillWithPagedKVCacheWrapper")
         print(f"[INFO] FlashInfer version: {flashinfer.__version__}")
-
-    # Basic setup
     device = get_device(args)
     if args.generate_repro_command:
         print(
             f"[INFO] To reproduce this test case, run the following command: {args.repro_command}"
         )
-
-    q_init_dtype = torch.bfloat16
-    kv_init_dtype = torch.bfloat16
-    rtol = 2e-1
-    atol = 1e-2
-
+    q_init_dtype = "bfloat16"
+    kv_init_dtype = "bfloat16"
+    rtol = 0.2
+    atol = 0.01
     q_dtype = dtype_str_to_torch_dtype(args.q_dtype)
-    if q_dtype not in [torch.bfloat16, torch.float8_e4m3fn]:
+>>>>>>    if q_dtype not in ["bfloat16", torch.float8_e4m3fn]:
         raise ValueError(f"Unsupported q_dtype: {args.q_dtype}")
-
     kv_dtype = dtype_str_to_torch_dtype(args.kv_dtype)
-    if kv_dtype not in [torch.bfloat16, torch.float8_e4m3fn]:
+>>>>>>    if kv_dtype not in ["bfloat16", torch.float8_e4m3fn]:
         raise ValueError(f"Unsupported kv_dtype: {args.kv_dtype}")
-
-    # Parse and validate backend configurations
     backends = args.backends
     page_size = args.page_size
     batch_size = args.batch_size
@@ -666,20 +596,17 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
     head_dim_vo = args.head_dim_vo
     causal = args.causal
     is_cuda_graph_compatible = not args.no_cuda_graph
-    # return_lse = not args.no_lse # TO-DO: Add support for this
     run_refcheck = args.refcheck
-
-    # Check for backend-specific constraints
     if "fa2" in backends:
         remove_fa2 = False
-        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
             print("[INFO] FA2 backend does not support FP8. Skipping.")
             remove_fa2 = True
         if remove_fa2:
             backends.remove("fa2")
     if "fa3" in backends:
         remove_fa3 = False
-        device_capability = torch.cuda.get_device_capability()
+        device_capability = paddle.device.cuda.get_device_capability()
         if device_capability[0] != 9:
             print(
                 f"[INFO] FA3 backend does not support capability {device_capability}. Skipping."
@@ -689,81 +616,66 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
             backends.remove("fa3")
     if "cudnn" in backends:
         remove_cudnn = False
-        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
+>>>>>>        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
+>>>>>>            torch.float8_e4m3fn,
+>>>>>>            torch.float8_e5m2,
         ]:
             print("[INFO] cuDNN backend does not support FP8. Skipping.")
             remove_cudnn = True
         if remove_cudnn:
             backends.remove("cudnn")
-
     if "trtllm-gen" in backends:
         remove_trtllm = False
-        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
+>>>>>>        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
+>>>>>>            torch.float8_e4m3fn,
+>>>>>>            torch.float8_e5m2,
         ]:
             print("[INFO] trtllm-gen backend does not support FP8. Skipping.")
             remove_trtllm = True
         if remove_trtllm:
             backends.remove("trtllm-gen")
-
     if "cutlass" in backends:
         print("[INFO] CUTLASS backend does not support prefill. Skipping.")
         remove_cutlass = True
         if remove_cutlass:
             backends.remove("cutlass")
-
     if len(backends) == 0:
         print("[ERROR] No backends to test. Exiting.")
         return
-
-    # Check for layer-specific constraints
     layer_not_supported = False
-    if not ((head_dim_qk == 128 and head_dim_qk == head_dim_vo) or head_dim_qk == 192):
+    if not (head_dim_qk == 128 and head_dim_qk == head_dim_vo or head_dim_qk == 192):
         print("[ERROR] Head dimension must be 128 or 192")
         layer_not_supported = True
     if layer_not_supported:
         print("[ERROR] Layer not supported. Exiting.")
         return
-
-    # Storage for timing results and outputs
     backend_times = {backend: [] for backend in backends}
     outputs = {}
-
-    # Randomly sample actual_seq_lens_q. Assume actual_seq_lens_kv is the same as actual_seq_lens_q.
     actual_seq_lens_q = sample_actual_seq_lens(
         s_qo, batch_size, None, args.random_actual_seq_len
     )
     actual_seq_lens_kv = actual_seq_lens_q.clone()
-
     avg_seq_len_q = actual_seq_lens_q.sum().item() // batch_size
     if args.verbose >= 1:
         print(f"[VERBOSE] Average actual seq len: {avg_seq_len_q}")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {actual_seq_lens_q.flatten() = }")
-
-    cumsum_s_qo = torch.sum(actual_seq_lens_q)
-    q = torch.randn(
-        cumsum_s_qo, num_qo_heads, head_dim_qk, device=device, dtype=q_init_dtype
-    )
+        print(
+            f"[VVERBOSE] actual_seq_lens_q.flatten() = {actual_seq_lens_q.flatten()!r}"
+        )
+    cumsum_s_qo = paddle.sum(x=actual_seq_lens_q)
+    q = paddle.randn(shape=[cumsum_s_qo, num_qo_heads, head_dim_qk], dtype=q_init_dtype)
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {q.shape = }")
-
-    # Create KV cache
+        print(f"[VVERBOSE] q.shape = {tuple(q.shape)!r}")
     num_pages_per_seq = (s_kv + page_size - 1) // page_size
     total_num_pages = num_pages_per_seq * batch_size
-
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {num_pages_per_seq = }")
-        print(f"[VVERBOSE] {total_num_pages = }")
-
-    kv_cache_shape = (total_num_pages, 2, num_kv_heads, page_size, head_dim_qk)
-    kv_cache = torch.randn(size=kv_cache_shape, dtype=kv_init_dtype).to(device)
+        print(f"[VVERBOSE] num_pages_per_seq = {num_pages_per_seq!r}")
+        print(f"[VVERBOSE] total_num_pages = {total_num_pages!r}")
+    kv_cache_shape = total_num_pages, 2, num_kv_heads, page_size, head_dim_qk
+    kv_cache = paddle.randn(shape=kv_cache_shape, dtype=kv_init_dtype).to(device)
     kv_cache = kv_cache.as_strided(
-        kv_cache.shape,
-        (
+        shape=tuple(kv_cache.shape),
+        stride=(
             2 * page_size * num_kv_heads * head_dim_qk,
             page_size * num_kv_heads * head_dim_qk,
             head_dim_qk,
@@ -772,10 +684,9 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
         ),
     )
     k_cache_view, v_cache_view = kv_cache[:, 0, :, :, :], kv_cache[:, 1, :, :, :]
-
     v_cache = v_cache_view.as_strided(
-        v_cache_view.shape,
-        (
+        shape=tuple(v_cache_view.shape),
+        stride=(
             2 * page_size * num_kv_heads * head_dim_qk,
             head_dim_qk,
             num_kv_heads * head_dim_qk,
@@ -783,112 +694,103 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
         ),
     )
     k_cache = k_cache_view.as_strided(
-        k_cache_view.shape,
-        (
+        shape=tuple(k_cache_view.shape),
+        stride=(
             2 * page_size * num_kv_heads * head_dim_qk,
             head_dim_qk,
             num_kv_heads * head_dim_qk,
             1,
         ),
     )
-
-    # Now initialize the page tables
-    block_tables = torch.tensor(
-        [
-            [k + i * num_pages_per_seq for k in range(num_pages_per_seq)]
+    block_tables = paddle.to_tensor(
+        data=[
+            [(k + i * num_pages_per_seq) for k in range(num_pages_per_seq)]
             for i in range(batch_size)
         ],
-        dtype=torch.int,
-        device=device,
+        dtype="int32",
+        place=device,
     )
-
     actual_seq_lens_q_device = actual_seq_lens_q.to(device)
     actual_seq_lens_kv_device = actual_seq_lens_kv.to(device)
     q_indptr = (
-        torch.cat(
-            [
-                torch.tensor([0], device=device),
-                torch.cumsum(actual_seq_lens_q_device.view(-1), dim=0)
+        paddle.concat(
+            x=[
+                paddle.to_tensor(data=[0], place=device),
+                paddle.cumsum(x=actual_seq_lens_q_device.view(-1), axis=0)
                 * head_dim_qk
                 * num_qo_heads,
             ]
         )
-        .long()
-        .to(device)
-    )  # For cuDNN
-    qo_indptr = (
-        torch.cat(
-            [
-                torch.tensor([0], device=device),
-                torch.cumsum(actual_seq_lens_q_device.view(-1), dim=0),
-            ]
-        )
-        .int()
+        .astype(dtype="int64")
         .to(device)
     )
-
-    # Because actual_seq_lens_kv is the same as actual_seq_lens_q, kv_indptr will become the same as qo_indptr
+    qo_indptr = (
+        paddle.concat(
+            x=[
+                paddle.to_tensor(data=[0], place=device),
+                paddle.cumsum(x=actual_seq_lens_q_device.view(-1), axis=0),
+            ]
+        )
+        .astype(dtype="int32")
+        .to(device)
+    )
     kv_indptr = (
-        torch.cat(
-            [
-                torch.tensor([0], device=device),
-                torch.cumsum(
-                    (actual_seq_lens_kv_device.flatten() + page_size - 1) // page_size,
-                    dim=0,
+        paddle.concat(
+            x=[
+                paddle.to_tensor(data=[0], place=device),
+                paddle.cumsum(
+                    x=(actual_seq_lens_kv_device.flatten() + page_size - 1)
+                    // page_size,
+                    axis=0,
                 ),
             ]
         )
-        .int()
+        .astype(dtype="int32")
         .to(device)
     )
-    kv_indices = torch.zeros(kv_indptr[-1], device=device, dtype=torch.int32)
+    kv_indices = paddle.zeros(shape=kv_indptr[-1], dtype="int32")
     for i in range(len(kv_indptr) - 1):
         start_idx = kv_indptr[i]
         end_idx = kv_indptr[i + 1]
-        kv_indices[start_idx:end_idx] = torch.arange(
-            i * num_pages_per_seq,
-            i * num_pages_per_seq + (end_idx - start_idx),
-            device=device,
+        kv_indices[start_idx:end_idx] = paddle.arange(
+            start=i * num_pages_per_seq,
+            end=i * num_pages_per_seq + (end_idx - start_idx),
         )
     kv_last_page_len = (
-        torch.where(
-            actual_seq_lens_kv_device.flatten() % page_size == 0,
-            torch.full((batch_size,), page_size, device=device),
-            actual_seq_lens_kv_device.flatten() % page_size,
+        paddle.where(
+            condition=actual_seq_lens_kv_device.flatten() % page_size == 0,
+            x=paddle.full(shape=(batch_size,), fill_value=page_size),
+            y=actual_seq_lens_kv_device.flatten() % page_size,
         )
-        .int()
+        .astype(dtype="int32")
         .to(device)
     )
-
-    scale = float(1.0 / (head_dim_qk**0.5))
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.int8, device=device)
-
+    scale = float(1.0 / head_dim_qk**0.5)
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="int8")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {kv_cache.shape = }")
-        print(f"[VVERBOSE] {kv_cache.stride() = }")
-        print(f"[VVERBOSE] {block_tables.shape = }")
-        print(f"[VVERBOSE] {qo_indptr.shape = }")
-        print(f"[VVERBOSE] {qo_indptr.dtype = }")
-        print(f"[VVERBOSE] {kv_indptr.shape = }")
-        print(f"[VVERBOSE] {kv_indices.shape = }")
-        print(f"[VVERBOSE] {kv_last_page_len.shape = }")
-        print(f"[VVERBOSE] {scale = }")
-
-    # Prepare wrappers
+        print(f"[VVERBOSE] kv_cache.shape = {tuple(kv_cache.shape)!r}")
+        print(f"[VVERBOSE] kv_cache.stride() = {kv_cache.get_strides()!r}")
+        print(f"[VVERBOSE] block_tables.shape = {tuple(block_tables.shape)!r}")
+        print(f"[VVERBOSE] qo_indptr.shape = {tuple(qo_indptr.shape)!r}")
+        print(f"[VVERBOSE] qo_indptr.dtype = {qo_indptr.dtype!r}")
+        print(f"[VVERBOSE] kv_indptr.shape = {tuple(kv_indptr.shape)!r}")
+        print(f"[VVERBOSE] kv_indices.shape = {tuple(kv_indices.shape)!r}")
+        print(f"[VVERBOSE] kv_last_page_len.shape = {tuple(kv_last_page_len.shape)!r}")
+        print(f"[VVERBOSE] scale = {scale!r}")
     backend_wrappers = {}
     for backend in backends:
         if backend in ["fa2", "fa3", "trtllm-gen"]:
-            backend_wrappers[backend] = (
-                flashinfer.prefill.BatchPrefillWithPagedKVCacheWrapper(
-                    workspace_buffer,
-                    "HND",
-                    use_cuda_graph=is_cuda_graph_compatible,
-                    qo_indptr_buf=qo_indptr,
-                    paged_kv_indptr_buf=kv_indptr,
-                    paged_kv_indices_buf=kv_indices,
-                    paged_kv_last_page_len_buf=kv_last_page_len,
-                    backend=backend,
-                )
+            backend_wrappers[
+                backend
+            ] = flashinfer.prefill.BatchPrefillWithPagedKVCacheWrapper(
+                workspace_buffer,
+                "HND",
+                use_cuda_graph=is_cuda_graph_compatible,
+                qo_indptr_buf=qo_indptr,
+                paged_kv_indptr_buf=kv_indptr,
+                paged_kv_indices_buf=kv_indices,
+                paged_kv_last_page_len_buf=kv_last_page_len,
+                backend=backend,
             )
             backend_wrappers[backend].plan(
                 qo_indptr,
@@ -904,17 +806,16 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
                 q_data_type=q_dtype,
                 kv_data_type=kv_dtype,
             )
-
     k_scale, v_scale = None, None
-    if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
         q = q.to(q_dtype)
-    if kv_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
-        k_data, v_data = torch.chunk(kv_cache, 2, dim=1)
+>>>>>>    if kv_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+        k_data, v_data = paddle.chunk(x=kv_cache, chunks=2, axis=1)
         k_scale = k_data.amax().item() / 256
         v_scale = v_data.amax().item() / 256
         k_fp8 = (k_data / k_scale).to(kv_dtype)
         v_fp8 = (v_data / v_scale).to(kv_dtype)
-        kv_cache = torch.cat([k_fp8, v_fp8], dim=1)
+        kv_cache = paddle.concat(x=[k_fp8, v_fp8], axis=1)
 
     def run_backend_wrapper(backend):
         if backend in ["fa2", "fa3", "trtllm-gen"]:
@@ -963,8 +864,6 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
             q, kv_cache, k_scale=k_scale, v_scale=v_scale
         )
         has_reference_output = True
-
-    # Iterate over each backend:
     for cur_backend in backends:
         if run_refcheck:
             outputs[cur_backend] = run_backend_wrapper(cur_backend)
@@ -989,24 +888,22 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
                 l2_flush_device=device,
                 sleep_after_run=False,
             )
-
-    # Perform reference check
     tested_backends = list(outputs.keys())
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 1:
         if run_refcheck and has_reference_output:
-            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
                 if args.verbose >= 2:
                     print(
                         "[VVERBOSE] Reference output is FP8. Converting to float32 for reference check."
                     )
-                reference_output = reference_output.to(torch.float32)
-                tested_outputs = [output.to(torch.float32) for output in tested_outputs]
+                reference_output = reference_output.to("float32")
+                tested_outputs = [output.to("float32") for output in tested_outputs]
             for i in range(len(tested_backends)):
                 try:
-                    torch.testing.assert_close(
-                        reference_output, tested_outputs[i], rtol=rtol, atol=atol
-                    )
+                    assert paddle.allclose(
+                        x=reference_output, y=tested_outputs[i], rtol=rtol, atol=atol
+                    ).item(), ""
                 except AssertionError as e:
                     print(
                         f"[ERROR] Output tensor mismatch between backends {tested_backends[0]} and {tested_backends[i]}"
@@ -1014,8 +911,6 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
                     if not args.allow_output_mismatch:
                         print(e)
                         raise
-
-    # Compute perf metrics
     res = []
     for backend in backends:
         if len(backend_times[backend]) > 0:
@@ -1045,7 +940,6 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
                 o_dtype=q_dtype,
             )
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
-
             if args.output_path is not None:
                 cur_res = defaultdict(str)
                 cur_res["routine"] = args.routine
@@ -1092,27 +986,21 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
     if args.verbose >= 1:
         print("[INFO] Running testBatchPrefillWithRaggedKVCacheWrapper")
         print(f"[INFO] FlashInfer version: {flashinfer.__version__}")
-
-    # Basic setup
     device = get_device(args)
     if args.generate_repro_command:
         print(
             f"[INFO] To reproduce this test case, run the following command: {args.repro_command}"
         )
-
-    q_init_dtype = torch.bfloat16
-    kv_init_dtype = torch.bfloat16
-    rtol = 2e-1
-    atol = 1e-2
-
+    q_init_dtype = "bfloat16"
+    kv_init_dtype = "bfloat16"
+    rtol = 0.2
+    atol = 0.01
     q_dtype = dtype_str_to_torch_dtype(args.q_dtype)
-    if q_dtype not in [torch.bfloat16, torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if q_dtype not in ["bfloat16", torch.float8_e4m3fn, torch.float8_e5m2]:
         raise ValueError(f"Unsupported q_dtype: {args.q_dtype}")
     kv_dtype = dtype_str_to_torch_dtype(args.kv_dtype)
-    if kv_dtype not in [torch.bfloat16, torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if kv_dtype not in ["bfloat16", torch.float8_e4m3fn, torch.float8_e5m2]:
         raise ValueError(f"Unsupported kv_dtype: {args.kv_dtype}")
-
-    # Parse and validate backend configurations
     backends = args.backends
     batch_size = args.batch_size
     s_qo = args.s_qo
@@ -1123,183 +1011,151 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
     head_dim_vo = args.head_dim_vo
     causal = args.causal
     is_cuda_graph_compatible = not args.no_cuda_graph
-    # return_lse = not args.no_lse # TO-DO: Add support for this
     run_refcheck = args.refcheck
-
-    # Check for backend-specific constraints
     if "cudnn" in backends:
         remove_cudnn = False
-        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
+>>>>>>        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
+>>>>>>            torch.float8_e4m3fn,
+>>>>>>            torch.float8_e5m2,
         ]:
             print("[INFO] CUDNN backend does not support FP8. Skipping.")
             remove_cudnn = True
         if remove_cudnn:
             backends.remove("cudnn")
-
     if "cutlass" in backends:
         remove_cutlass = False
-        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
+>>>>>>        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
+>>>>>>            torch.float8_e4m3fn,
+>>>>>>            torch.float8_e5m2,
         ]:
             print("[INFO] CUTLASS backend does not support FP8. Skipping.")
             remove_cutlass = True
         if remove_cutlass:
             backends.remove("cutlass")
-
     if "trtllm-gen" in backends:
         print("[INFO] trtllm-gen backend does not support ragged prefill. Skipping.")
         remove_trtllm = True
         if remove_trtllm:
             backends.remove("trtllm-gen")
-
     if len(backends) == 0:
         print("[ERROR] No backends to test. Exiting.")
         return
-
-    # Check for layer-specific constraints
     layer_not_supported = False
-    if not ((head_dim_qk == 128 and head_dim_qk == head_dim_vo) or head_dim_qk == 192):
+    if not (head_dim_qk == 128 and head_dim_qk == head_dim_vo or head_dim_qk == 192):
         print("[ERROR] Head dimension must be 128 or 192")
         layer_not_supported = True
     if layer_not_supported:
         print("[ERROR] Layer not supported. Exiting.")
         return
-
     backend_times = {backend: [] for backend in backends}
     outputs = {}
-
-    # Randomly sample actual_seq_lens_q. Assume actual_seq_lens_kv is the same as actual_seq_lens_q.
     actual_seq_lens_q = sample_actual_seq_lens(
         s_qo, batch_size, None, args.random_actual_seq_len
     )
     actual_seq_lens_kv = actual_seq_lens_q.clone()
-
     avg_seq_len_q = actual_seq_lens_q.sum().item() // batch_size
     if args.verbose >= 1:
         print(f"[VERBOSE] Average actual seq len: {avg_seq_len_q}")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {actual_seq_lens_q.flatten() = }")
-
-    cumsum_s_qo = torch.sum(actual_seq_lens_q)
-    cumsum_s_kv = torch.sum(actual_seq_lens_kv)
-    q = torch.randn(
-        cumsum_s_qo, num_qo_heads, head_dim_qk, device=device, dtype=q_init_dtype
-    )
+        print(
+            f"[VVERBOSE] actual_seq_lens_q.flatten() = {actual_seq_lens_q.flatten()!r}"
+        )
+    cumsum_s_qo = paddle.sum(x=actual_seq_lens_q)
+    cumsum_s_kv = paddle.sum(x=actual_seq_lens_kv)
+    q = paddle.randn(shape=[cumsum_s_qo, num_qo_heads, head_dim_qk], dtype=q_init_dtype)
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {q.shape = }")
-
-    k = torch.randn(
-        cumsum_s_kv, num_kv_heads, head_dim_qk, device=device, dtype=kv_init_dtype
+        print(f"[VVERBOSE] q.shape = {tuple(q.shape)!r}")
+    k = paddle.randn(
+        shape=[cumsum_s_kv, num_kv_heads, head_dim_qk], dtype=kv_init_dtype
     )
-    v = torch.randn(
-        cumsum_s_kv, num_kv_heads, head_dim_vo, device=device, dtype=kv_init_dtype
+    v = paddle.randn(
+        shape=[cumsum_s_kv, num_kv_heads, head_dim_vo], dtype=kv_init_dtype
     )
-
     block_tables = None
-
-    ## The following are for BatchPrefillWithRaggedKVCacheWrapper
     actual_seq_lens_q_device = actual_seq_lens_q.to(device)
     actual_seq_lens_kv_device = actual_seq_lens_kv.to(device)
-
     q_indptr = (
-        torch.cat(
-            [
-                torch.tensor([0], device=device),
-                torch.cumsum(actual_seq_lens_q_device.view(-1), dim=0)
+        paddle.concat(
+            x=[
+                paddle.to_tensor(data=[0], place=device),
+                paddle.cumsum(x=actual_seq_lens_q_device.view(-1), axis=0)
                 * head_dim_qk
                 * num_qo_heads,
             ]
         )
-        .long()
+        .astype(dtype="int64")
         .to(device)
-    )  # For cuDNN
-
-    k_indptr = torch.cat(
-        [
-            torch.tensor([0], device=device),
-            torch.cumsum(actual_seq_lens_kv_device.view(-1), dim=0)
+    )
+    k_indptr = paddle.concat(
+        x=[
+            paddle.to_tensor(data=[0], place=device),
+            paddle.cumsum(x=actual_seq_lens_kv_device.view(-1), axis=0)
             * head_dim_qk
             * num_kv_heads,
         ]
-    ).long()
-
-    v_indptr = torch.cat(
-        [
-            torch.tensor([0], device=device),
-            torch.cumsum(actual_seq_lens_kv_device.view(-1), dim=0)
+    ).astype(dtype="int64")
+    v_indptr = paddle.concat(
+        x=[
+            paddle.to_tensor(data=[0], place=device),
+            paddle.cumsum(x=actual_seq_lens_kv_device.view(-1), axis=0)
             * head_dim_vo
             * num_kv_heads,
         ]
-    ).long()
-
-    o_indptr = torch.cat(
-        [
-            torch.tensor([0], device=device),
-            torch.cumsum(actual_seq_lens_q_device.view(-1), dim=0)
+    ).astype(dtype="int64")
+    o_indptr = paddle.concat(
+        x=[
+            paddle.to_tensor(data=[0], place=device),
+            paddle.cumsum(x=actual_seq_lens_q_device.view(-1), axis=0)
             * head_dim_vo
             * num_qo_heads,
         ]
-    ).long()
-
-    batch_offsets_stats = torch.cat(
-        [
-            torch.zeros(
-                1,
-                device=actual_seq_lens_q_device.device,
-                dtype=actual_seq_lens_q_device.dtype,
-            ),
-            torch.cumsum(actual_seq_lens_q_device.flatten(), dim=0) * num_qo_heads,
+    ).astype(dtype="int64")
+    batch_offsets_stats = paddle.concat(
+        x=[
+            paddle.zeros(shape=[1], dtype=actual_seq_lens_q_device.dtype),
+            paddle.cumsum(x=actual_seq_lens_q_device.flatten(), axis=0) * num_qo_heads,
         ]
     ).cuda()
-
     qo_indptr = (
-        torch.cat(
-            [
-                torch.tensor([0], device=device),
-                torch.cumsum(actual_seq_lens_q_device.view(-1), dim=0),
+        paddle.concat(
+            x=[
+                paddle.to_tensor(data=[0], place=device),
+                paddle.cumsum(x=actual_seq_lens_q_device.view(-1), axis=0),
             ]
         )
-        .int()
+        .astype(dtype="int32")
         .to(device)
     )
-    # Because actual_seq_lens_kv is the same as actual_seq_lens_q, kv_indptr will become the same as qo_indptr
     kv_indptr = (
-        torch.cat(
-            [
-                torch.tensor([0], device=device),
-                torch.cumsum(actual_seq_lens_kv_device.view(-1), dim=0),
+        paddle.concat(
+            x=[
+                paddle.to_tensor(data=[0], place=device),
+                paddle.cumsum(x=actual_seq_lens_kv_device.view(-1), axis=0),
             ]
         )
-        .int()
+        .astype(dtype="int32")
         .to(device)
     )
-
-    scale = float(1.0 / (head_dim_qk**0.5))
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.int8, device=device)
-
+    scale = float(1.0 / head_dim_qk**0.5)
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="int8")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {k.shape = }")
-        print(f"[VVERBOSE] {v.shape = }")
-        print(f"[VVERBOSE] {qo_indptr.shape = }")
-        print(f"[VVERBOSE] {kv_indptr.shape = }")
-        print(f"[VVERBOSE] {scale = }")
-
-    # Prepare wrappers
+        print(f"[VVERBOSE] k.shape = {tuple(k.shape)!r}")
+        print(f"[VVERBOSE] v.shape = {tuple(v.shape)!r}")
+        print(f"[VVERBOSE] qo_indptr.shape = {tuple(qo_indptr.shape)!r}")
+        print(f"[VVERBOSE] kv_indptr.shape = {tuple(kv_indptr.shape)!r}")
+        print(f"[VVERBOSE] scale = {scale!r}")
     backend_wrappers = {}
     for backend in backends:
         if backend in ["cutlass", "fa2", "fa3", "trtllm-gen"]:
-            backend_wrappers[backend] = (
-                flashinfer.prefill.BatchPrefillWithRaggedKVCacheWrapper(
-                    workspace_buffer,
-                    "NHD",
-                    use_cuda_graph=is_cuda_graph_compatible,
-                    qo_indptr_buf=qo_indptr,
-                    kv_indptr_buf=kv_indptr,
-                    backend=backend,
-                )
+            backend_wrappers[
+                backend
+            ] = flashinfer.prefill.BatchPrefillWithRaggedKVCacheWrapper(
+                workspace_buffer,
+                "NHD",
+                use_cuda_graph=is_cuda_graph_compatible,
+                qo_indptr_buf=qo_indptr,
+                kv_indptr_buf=kv_indptr,
+                backend=backend,
             )
             backend_wrappers[backend].plan(
                 qo_indptr,
@@ -1312,11 +1168,10 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
                 q_data_type=q_dtype,
                 kv_data_type=kv_dtype,
             )
-
     k_scale, v_scale = None, None
-    if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
         q = q.to(q_dtype)
-    if kv_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if kv_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
         k_scale = k.amax().item() / 256
         v_scale = v.amax().item() / 256
         k = (k / k_scale).to(kv_dtype)
@@ -1353,8 +1208,6 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
     if run_refcheck and "fa2" in backends:
         reference_output = backend_wrappers["fa2"].run_return_lse(q, k, v)[0]
         has_reference_output = True
-
-    # Iterate over each backend:
     for cur_backend in backends:
         if run_refcheck:
             outputs[cur_backend] = run_backend_wrapper(cur_backend)
@@ -1379,24 +1232,22 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
                 l2_flush_device=device,
                 sleep_after_run=True,
             )
-
-    # Perform reference check
     tested_backends = list(outputs.keys())
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 1:
         if run_refcheck and has_reference_output:
-            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
                 if args.verbose >= 2:
                     print(
                         "[VVERBOSE] Reference output is FP8. Converting to float32 for reference check."
                     )
-                reference_output = reference_output.to(torch.float32)
-                tested_outputs = [output.to(torch.float32) for output in tested_outputs]
+                reference_output = reference_output.to("float32")
+                tested_outputs = [output.to("float32") for output in tested_outputs]
             for i in range(len(tested_backends)):
                 try:
-                    torch.testing.assert_close(
-                        reference_output, tested_outputs[i], rtol=rtol, atol=atol
-                    )
+                    assert paddle.allclose(
+                        x=reference_output, y=tested_outputs[i], rtol=rtol, atol=atol
+                    ).item(), ""
                 except AssertionError as e:
                     print(
                         f"[ERROR] Output tensor mismatch between backends {tested_backends[0]} and {tested_backends[i]}"
@@ -1404,8 +1255,6 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
                     if not args.allow_output_mismatch:
                         print(e)
                         raise
-
-    # Compute perf metrics
     res = []
     for backend in backends:
         if len(backend_times[backend]) > 0:
@@ -1434,9 +1283,7 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
                 kv_dtype=kv_dtype,
                 o_dtype=q_dtype,
             )
-
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
-
             if args.output_path is not None:
                 cur_res = defaultdict(str)
                 cur_res["routine"] = args.routine
@@ -1445,7 +1292,7 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
                 cur_res["tflops"] = tflops
                 cur_res["tb_per_sec"] = tb_per_sec
                 cur_res["backend"] = backend
-                cur_res["page_size"] = 0  # No page size for ragged
+                cur_res["page_size"] = 0
                 cur_res["batch_size"] = batch_size
                 cur_res["s_qo"] = s_qo
                 cur_res["s_kv"] = s_kv
@@ -1483,160 +1330,123 @@ def testBatchMLAPagedAttentionWrapper(args):
     if args.verbose >= 1:
         print("[INFO] Running testBatchMLAPagedAttentionWrapper")
         print(f"[INFO] FlashInfer version: {flashinfer.__version__}")
-
-    # Basic setup
     device = get_device(args)
     if args.generate_repro_command:
         print(
             f"[INFO] To reproduce this test case, run the following command: {args.repro_command}"
         )
-
-    q_init_dtype = torch.bfloat16
-    kv_init_dtype = torch.bfloat16
-    rtol = 2e-1
-    atol = 1e-2
-
-    # Handle different query data types.
+    q_init_dtype = "bfloat16"
+    kv_init_dtype = "bfloat16"
+    rtol = 0.2
+    atol = 0.01
     q_dtype = dtype_str_to_torch_dtype(args.q_dtype)
-    if q_dtype not in [torch.bfloat16, torch.float8_e4m3fn]:
+>>>>>>    if q_dtype not in ["bfloat16", torch.float8_e4m3fn]:
         raise ValueError(f"Unsupported q_dtype: {args.q_dtype}")
-
-    # Handle different KV cache data types.
     kv_dtype = dtype_str_to_torch_dtype(args.kv_dtype)
-    if kv_dtype not in [torch.bfloat16, torch.float8_e4m3fn]:
+>>>>>>    if kv_dtype not in ["bfloat16", torch.float8_e4m3fn]:
         raise ValueError(f"Unsupported kv_dtype: {args.kv_dtype}")
-
     backends = args.backends
     page_size = args.page_size
     batch_size = args.batch_size
     s_qo = args.s_qo
     s_kv = args.s_kv
     num_qo_heads = args.num_qo_heads
-    # num_kv_heads not used in MLA
-    # head_dim_qk = args.head_dim_qk
     assert args.head_dim_ckv is not None, "head_dim_ckv must be provided for MLA"
     assert args.head_dim_kpe is not None, "head_dim_kpe must be provided for MLA"
     head_dim_ckv = args.head_dim_ckv
     head_dim_kpe = args.head_dim_kpe
     is_cuda_graph_compatible = not args.no_cuda_graph
-    causal = False  # False for MLA
+    causal = False
     run_refcheck = args.refcheck
-
-    # Check for backend-specific constraints
     if "fa2" in backends:
         remove_fa2 = False
-        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
+>>>>>>        if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] or kv_dtype in [
+>>>>>>            torch.float8_e4m3fn,
+>>>>>>            torch.float8_e5m2,
         ]:
             print("[INFO] FA2 backend does not support FP8. Skipping.")
             remove_fa2 = True
         if remove_fa2:
             backends.remove("fa2")
-
-    # Storage for timing results and outputs
     backend_times = {backend: [] for backend in backends}
     outputs = {}
-
     actual_seq_lens_kv = sample_actual_seq_lens(
         s_kv, batch_size, device, args.random_actual_seq_len
     )
-    sum_seq_kv = torch.sum(actual_seq_lens_kv).item()
+    sum_seq_kv = paddle.sum(x=actual_seq_lens_kv).item()
     avg_seq_len_kv = sum_seq_kv // batch_size
-
     if args.verbose >= 1:
         print(f"[VERBOSE] Average actual seq len: {avg_seq_len_kv}")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {actual_seq_lens_kv.flatten() = }")
-
-    q_nope = torch.rand(
-        batch_size, num_qo_heads, head_dim_ckv, dtype=q_init_dtype, device="cuda"
+        print(
+            f"[VVERBOSE] actual_seq_lens_kv.flatten() = {actual_seq_lens_kv.flatten()!r}"
+        )
+    q_nope = paddle.rand(
+        shape=[batch_size, num_qo_heads, head_dim_ckv], dtype=q_init_dtype
     )
-    q_pe = torch.zeros(
-        batch_size, num_qo_heads, head_dim_kpe, dtype=q_init_dtype, device="cuda"
+    q_pe = paddle.zeros(
+        shape=[batch_size, num_qo_heads, head_dim_kpe], dtype=q_init_dtype
     )
-    q = torch.cat([q_nope, q_pe], dim=2)
-
+    q = paddle.concat(x=[q_nope, q_pe], axis=2)
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {q_nope.shape = }")
-        print(f"[VVERBOSE] {q_pe.shape = }")
-        print(f"[VVERBOSE] {q.shape = }")
-
-    # Create KV cache
+        print(f"[VVERBOSE] q_nope.shape = {tuple(q_nope.shape)!r}")
+        print(f"[VVERBOSE] q_pe.shape = {tuple(q_pe.shape)!r}")
+        print(f"[VVERBOSE] q.shape = {tuple(q.shape)!r}")
     num_pages_per_seq = (s_kv + page_size - 1) // page_size
     total_num_pages = num_pages_per_seq * batch_size
-
-    # Now initialize the page tables
-    block_tables = torch.tensor(
-        [
-            [k + i * num_pages_per_seq for k in range(num_pages_per_seq)]
+    block_tables = paddle.to_tensor(
+        data=[
+            [(k + i * num_pages_per_seq) for k in range(num_pages_per_seq)]
             for i in range(batch_size)
         ],
-        dtype=torch.int,
-        device=device,
+        dtype="int32",
+        place=device,
     )
-
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {num_pages_per_seq = }")
-        print(f"[VVERBOSE] {total_num_pages = }")
-        print(f"[VVERBOSE] {block_tables.shape = }")
-
-    # Initialize KV cache with appropriate shape and stride
-    ckv_cache_shape = (
-        total_num_pages,
-        page_size,
-        head_dim_ckv,
-    )
-    ckv_cache = torch.randn(size=ckv_cache_shape, dtype=kv_init_dtype, device=device)
-
-    kpe_cache_shape = (
-        total_num_pages,
-        page_size,
-        head_dim_kpe,
-    )
-    kpe_cache = torch.randn(size=kpe_cache_shape, dtype=q_init_dtype, device=device)
-    kv_cache = torch.cat([ckv_cache, kpe_cache], dim=2)
-
-    qo_indptr = torch.arange(0, batch_size + 1, device=device).int()
+        print(f"[VVERBOSE] num_pages_per_seq = {num_pages_per_seq!r}")
+        print(f"[VVERBOSE] total_num_pages = {total_num_pages!r}")
+        print(f"[VVERBOSE] block_tables.shape = {tuple(block_tables.shape)!r}")
+    ckv_cache_shape = total_num_pages, page_size, head_dim_ckv
+    ckv_cache = paddle.randn(shape=ckv_cache_shape, dtype=kv_init_dtype)
+    kpe_cache_shape = total_num_pages, page_size, head_dim_kpe
+    kpe_cache = paddle.randn(shape=kpe_cache_shape, dtype=q_init_dtype)
+    kv_cache = paddle.concat(x=[ckv_cache, kpe_cache], axis=2)
+    qo_indptr = paddle.arange(start=0, end=batch_size + 1).astype(dtype="int32")
     kv_indptr = (
-        torch.cat(
-            [
-                torch.tensor([0], device=device),
-                torch.cumsum(
-                    (actual_seq_lens_kv.flatten() + page_size - 1) // page_size, dim=0
+        paddle.concat(
+            x=[
+                paddle.to_tensor(data=[0], place=device),
+                paddle.cumsum(
+                    x=(actual_seq_lens_kv.flatten() + page_size - 1) // page_size,
+                    axis=0,
                 ),
             ]
         )
-        .int()
+        .astype(dtype="int32")
         .to(device)
     )
-
-    # kv_indices[-1] is the total number of actual pages
-    kv_indices = torch.zeros(kv_indptr[-1], device=device, dtype=torch.int32)
+    kv_indices = paddle.zeros(shape=kv_indptr[-1], dtype="int32")
     for i in range(len(kv_indptr) - 1):
         start_idx = kv_indptr[i]
         end_idx = kv_indptr[i + 1]
-        kv_indices[start_idx:end_idx] = torch.arange(
-            i * num_pages_per_seq,
-            i * num_pages_per_seq + (end_idx - start_idx),
-            device=device,
+        kv_indices[start_idx:end_idx] = paddle.arange(
+            start=i * num_pages_per_seq,
+            end=i * num_pages_per_seq + (end_idx - start_idx),
         )
-
-    sm_scale = 1.0 / ((head_dim_ckv + head_dim_kpe) ** 0.5)
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.int8, device=device)
-
+    sm_scale = 1.0 / (head_dim_ckv + head_dim_kpe) ** 0.5
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="int8")
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {ckv_cache.shape = }")
-        print(f"[VVERBOSE] {kpe_cache.shape = }")
-        print(f"[VVERBOSE] {kv_cache.shape = }")
-        print(f"[VVERBOSE] {qo_indptr.shape = }")
-        print(f"[VVERBOSE] {kv_indptr.shape = }")
-        print(f"[VVERBOSE] {kv_indices.shape = }")
-        print(f"[VVERBOSE] {actual_seq_lens_kv.shape = }")
-        print(f"[VVERBOSE] {sm_scale = }")
-        print(f"[VVERBOSE] {workspace_buffer.shape = }")
-
-    # Create wrapper
+        print(f"[VVERBOSE] ckv_cache.shape = {tuple(ckv_cache.shape)!r}")
+        print(f"[VVERBOSE] kpe_cache.shape = {tuple(kpe_cache.shape)!r}")
+        print(f"[VVERBOSE] kv_cache.shape = {tuple(kv_cache.shape)!r}")
+        print(f"[VVERBOSE] qo_indptr.shape = {tuple(qo_indptr.shape)!r}")
+        print(f"[VVERBOSE] kv_indptr.shape = {tuple(kv_indptr.shape)!r}")
+        print(f"[VVERBOSE] kv_indices.shape = {tuple(kv_indices.shape)!r}")
+        print(
+            f"[VVERBOSE] actual_seq_lens_kv.shape = {tuple(actual_seq_lens_kv.shape)!r}"
+        )
+        print(f"[VVERBOSE] sm_scale = {sm_scale!r}")
+        print(f"[VVERBOSE] workspace_buffer.shape = {tuple(workspace_buffer.shape)!r}")
     if "fa2" in backends:
         fi_fa2_mla_wrapper = flashinfer.mla.BatchMLAPagedAttentionWrapper(
             float_workspace_buffer=workspace_buffer,
@@ -1661,12 +1471,11 @@ def testBatchMLAPagedAttentionWrapper(args):
             q_data_type=q_dtype,
             kv_data_type=kv_dtype,
         )
-
-    if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if q_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
         q = q.to(q_dtype)
         q_pe = q_pe.to(q_dtype)
         q_nope = q_nope.to(q_dtype)
-    if kv_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if kv_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
         ckv_cache = ckv_cache.to(kv_dtype)
         kpe_cache = kpe_cache.to(kv_dtype)
         kv_cache = kv_cache.to(kv_dtype)
@@ -1678,10 +1487,10 @@ def testBatchMLAPagedAttentionWrapper(args):
             )
         if backend == "trtllm-gen-native":
             return flashinfer.decode.trtllm_batch_decode_with_kv_cache_mla(
-                query=q.unsqueeze(1),
-                kv_cache=kv_cache.unsqueeze(1),
+                query=q.unsqueeze(axis=1),
+                kv_cache=kv_cache.unsqueeze(axis=1),
                 workspace_buffer=workspace_buffer,
-                qk_nope_head_dim=128,  # To-do: Why??
+                qk_nope_head_dim=128,
                 kv_lora_rank=head_dim_ckv,
                 qk_rope_head_dim=head_dim_kpe,
                 block_tables=block_tables,
@@ -1700,8 +1509,6 @@ def testBatchMLAPagedAttentionWrapper(args):
         has_reference_output = True
     else:
         has_reference_output = False
-
-    # Iterate over each backend:
     for cur_backend in backends:
         if run_refcheck:
             outputs[cur_backend] = run_backend_wrapper(cur_backend).detach()
@@ -1726,20 +1533,18 @@ def testBatchMLAPagedAttentionWrapper(args):
                 l2_flush_device=device,
                 sleep_after_run=False,
             )
-
-    # Perform reference check
     tested_backends = list(outputs.keys())
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 1:
         if run_refcheck and has_reference_output:
-            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
-                reference_output = reference_output.to(torch.float32)
-                tested_outputs = [output.to(torch.float32) for output in tested_outputs]
+>>>>>>            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+                reference_output = reference_output.to("float32")
+                tested_outputs = [output.to("float32") for output in tested_outputs]
             for i in range(len(tested_outputs)):
                 try:
-                    torch.testing.assert_close(
-                        reference_output, tested_outputs[i], rtol=rtol, atol=atol
-                    )
+                    assert paddle.allclose(
+                        x=reference_output, y=tested_outputs[i], rtol=rtol, atol=atol
+                    ).item(), ""
                 except AssertionError as e:
                     print(
                         f"[ERROR] Output tensor mismatch between backends {tested_backends[0]} and {tested_backends[i]}"
@@ -1747,45 +1552,40 @@ def testBatchMLAPagedAttentionWrapper(args):
                     if not args.allow_output_mismatch:
                         print(e)
                         raise
-
-    # Compute perf metrics
     res = []
     for backend in backends:
         if len(backend_times[backend]) > 0:
             median_time = np.median(backend_times[backend])
             std_time = np.std(backend_times[backend])
             actual_seq_lens_kv_flat = actual_seq_lens_kv.flatten().to("cpu")
-            actual_seq_lens_q_flat = torch.ones_like(
-                actual_seq_lens_kv.flatten().to("cpu")
+            actual_seq_lens_q_flat = paddle.ones_like(
+                x=actual_seq_lens_kv.flatten().to("cpu")
             )
             o_mem_bytes = (
-                actual_seq_lens_q_flat.numel()
+                actual_seq_lens_q_flat.size
                 * num_qo_heads
                 * head_dim_ckv
-                * q_dtype.itemsize
+                * q_dtype.element_size()
             )
             qkv_mem_bytes = sum(
                 [
-                    _.numel() * _.element_size()
+                    (_.size * _.element_size())
                     for _ in [q_nope, q_pe, ckv_cache, kpe_cache]
                 ]
             )
             total_mem_bytes = o_mem_bytes + qkv_mem_bytes
-            tb_per_sec = (total_mem_bytes / (median_time * 1e9)).item()
+            tb_per_sec = (total_mem_bytes / (median_time * 1000000000.0)).item()
             tflops_total = (
                 2
-                * torch.dot(
-                    actual_seq_lens_q_flat.to(torch.float32),
-                    actual_seq_lens_kv_flat.to(torch.float32),
+                * paddle.dot(
+                    x=actual_seq_lens_q_flat.to("float32"),
+                    y=actual_seq_lens_kv_flat.to("float32"),
                 )
                 * num_qo_heads
                 * (2 * head_dim_ckv + head_dim_kpe)
             )
-            tflops = (tflops_total / (median_time * 1e9)).item()
-
+            tflops = (tflops_total / (median_time * 1000000000.0)).item()
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
-
-            # TO-Do:
             if args.output_path is not None:
                 cur_res = defaultdict(str)
                 cur_res["routine"] = args.routine

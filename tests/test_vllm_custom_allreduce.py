@@ -1,48 +1,36 @@
-# flashinfer: adapted from sglang + vllm
-# refer to sgl-kernel/tests/test_custom_allreduce.py from sglang
+import sys
 
+sys.path.append("/home/flashinfer_paddle")
 import logging
 import multiprocessing as mp
 import socket
 from typing import Any
 
+import paddle
 import pytest
-import torch
-import torch.distributed as dist
+from paddle_utils import *
 
 import flashinfer.comm as comm
-
-# Adapted from https://github.com/vllm-project/vllm/blob/v0.6.4.post1/vllm/distributed/device_communicators/cuda_wrapper.py
-
 
 logger = logging.getLogger(__name__)
 
 
 def _run_correctness_worker(world_size, rank, distributed_init_port):
-    device = torch.device(f"cuda:{rank}")
-    torch.cuda.set_device(device)
+    device = device2str(f"cuda:{rank}")
+    paddle.device.set_device(device=device2str(device))
     distributed_init_method = f"tcp://localhost:{distributed_init_port}"
-    dist.init_process_group(
-        backend="nccl",
-        init_method=distributed_init_method,
-        rank=rank,
-        world_size=world_size,
-    )
-    group = dist.group.WORLD
-
+    paddle.distributed.init_parallel_env()
+>>>>>>    group = torch.distributed.group.WORLD
     try:
-        device = torch.device(f"cuda:{rank}")
+        device = device2str(f"cuda:{rank}")
         max_size = 8192 * 1024
         meta_ptrs = comm.create_shared_buffer(
             comm.vllm_meta_size() + max_size, group=group
         )
-
-        rank_data = torch.empty(8 * 1024 * 1024, dtype=torch.uint8, device=device)
+        rank_data = paddle.empty(shape=8 * 1024 * 1024, dtype="uint8")
         buffer_ptrs = comm.create_shared_buffer(max_size, group=group)
-
         custom_ptr = comm.vllm_init_custom_ar(meta_ptrs, rank_data, rank, True)
         comm.vllm_register_buffer(custom_ptr, buffer_ptrs)
-
         test_sizes = [
             512,
             2560,
@@ -56,41 +44,31 @@ def _run_correctness_worker(world_size, rank, distributed_init_port):
             2097152,
         ]
         num_ctas = [1, 2, 4, 8, 16, 32, 36]
-        dtypes = [torch.float32, torch.float16, torch.bfloat16]
+        dtypes = ["float32", "float16", "bfloat16"]
         test_loop = 10
-
         for test_size in test_sizes:
             for num_cta in num_ctas:
                 for dtype in dtypes:
                     for _ in range(test_loop):
-                        inp1 = torch.randint(
-                            1, 16, (test_size,), dtype=dtype, device=device
+                        inp1 = paddle.randint(
+                            low=1, high=16, shape=(test_size,), dtype=dtype
                         )
                         inp1_ref = inp1.clone()
-                        out1 = torch.empty_like(inp1)
-
+                        out1 = paddle.empty_like(x=inp1)
                         comm.vllm_all_reduce(
-                            custom_ptr,
-                            inp1,
-                            out1,
-                            buffer_ptrs[rank],
-                            max_size,
-                            num_cta,
+                            custom_ptr, inp1, out1, buffer_ptrs[rank], max_size, num_cta
                         )
-
-                        dist.all_reduce(inp1_ref, group=group)
-
-                        torch.testing.assert_close(out1, inp1_ref)
+                        paddle.distributed.all_reduce(tensor=inp1_ref, group=group)
+                        assert paddle.allclose(x=out1, y=inp1_ref).item(), ""
     finally:
-        dist.barrier(group=group)
+        paddle.distributed.barrier(group=group)
         if custom_ptr is not None:
             comm.vllm_dispose(custom_ptr)
         if buffer_ptrs:
             comm.free_shared_buffer(buffer_ptrs, group)
         if meta_ptrs:
             comm.free_shared_buffer(meta_ptrs, group)
-
-        dist.destroy_process_group(group=group)
+>>>>>>        torch.distributed.destroy_process_group(group=group)
 
 
 def get_open_port() -> int:
@@ -108,33 +86,28 @@ def multi_process_parallel(
     world_size: int, test_target: Any, target_args: tuple = ()
 ) -> None:
     mp.set_start_method("spawn", force=True)
-
     procs = []
     distributed_init_port = get_open_port()
     for i in range(world_size):
         proc_args = (world_size, i, distributed_init_port) + target_args
         proc = mp.Process(target=test_target, args=proc_args, name=f"Worker-{i}")
-        proc.start()
+        """Not Support auto convert *.start, please judge whether it is Pytorch API and convert by yourself"""
+>>>>>>        proc.start()
         procs.append(proc)
-
     for i in range(world_size):
         procs[i].join()
-        assert procs[i].exitcode == 0, (
-            f"Process {i} failed with exit code {procs[i].exitcode}"
-        )
+        assert (
+            procs[i].exitcode == 0
+        ), f"Process {i} failed with exit code {procs[i].exitcode}"
 
 
 @pytest.mark.parametrize("world_size", [2, 4])
 def test_vllm_custom_allreduce(world_size):
-    available_gpus = torch.cuda.device_count()
+    available_gpus = paddle.device.cuda.device_count()
     if world_size > available_gpus:
         raise ValueError(
             f"world_size {world_size} is greater than available_gpus {available_gpus}"
         )
     print(f"Running test for world_size={world_size}")
-    multi_process_parallel(
-        world_size,
-        _run_correctness_worker,
-        target_args=(),
-    )
+    multi_process_parallel(world_size, _run_correctness_worker, target_args=())
     print(f"custom allreduce tp = {world_size}: OK")

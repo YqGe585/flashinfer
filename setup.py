@@ -1,3 +1,8 @@
+import os
+
+import paddle
+import setuptools
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,16 +18,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-import os
 import platform
 import re
 import subprocess
 from pathlib import Path
 from typing import List, Mapping
-
-import setuptools
-from setuptools.dist import Distribution
 
 root = Path(__file__).parent.resolve()
 aot_ops_package_dir = root / "build" / "aot-ops-package-dir"
@@ -65,26 +65,25 @@ install_requires = [
     "nvidia-cudnn-frontend>=1.13.0",
 ]
 generate_build_meta({})
-
 if enable_aot:
-    import torch
-    import torch.utils.cpp_extension as torch_cpp_ext
+    pass
     from packaging.version import Version
 
     def get_cuda_version() -> Version:
-        if torch_cpp_ext.CUDA_HOME is None:
+        if paddle.utils.cpp_extension.cpp_extension.CUDA_HOME is None:
             nvcc = "nvcc"
         else:
-            nvcc = os.path.join(torch_cpp_ext.CUDA_HOME, "bin/nvcc")
+            nvcc = os.path.join(
+                paddle.utils.cpp_extension.cpp_extension.CUDA_HOME, "bin/nvcc"
+            )
         txt = subprocess.check_output([nvcc, "--version"], text=True)
-        return Version(re.findall(r"release (\d+\.\d+),", txt)[0])
+        return Version(re.findall("release (\\d+\\.\\d+),", txt)[0])
 
     cuda_version = get_cuda_version()
-    torch_full_version = Version(torch.__version__)
+    torch_full_version = Version(paddle.__version__)
     torch_version = f"{torch_full_version.major}.{torch_full_version.minor}"
     install_requires = [req for req in install_requires if not req.startswith("torch ")]
     install_requires.append(f"torch == {torch_version}.*")
-
     aot_build_meta = {}
     aot_build_meta["cuda_major"] = cuda_version.major
     aot_build_meta["cuda_minor"] = cuda_version.minor
@@ -94,7 +93,7 @@ if enable_aot:
     generate_build_meta(aot_build_meta)
 
 
-class AotDistribution(Distribution):
+class AotDistribution(setuptools.dist.Distribution):
     def has_ext_modules(self) -> bool:
         return enable_aot
 

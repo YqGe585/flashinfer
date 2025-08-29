@@ -2,16 +2,12 @@ import functools
 from types import SimpleNamespace
 from typing import Optional, Tuple
 
-import torch
+import paddle
 
 from .jit import JitSpec
 from .jit import env as jit_env
 from .jit import gen_jit_spec, sm100a_nvcc_flags
-from .utils import (
-    device_support_pdl,
-    register_custom_op,
-    register_fake_op,
-)
+from .utils import device_support_pdl, register_custom_op, register_fake_op
 
 
 def gen_mxfp8_quantization_sm100_module() -> JitSpec:
@@ -27,16 +23,8 @@ def gen_mxfp8_quantization_sm100_module() -> JitSpec:
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal/cpp/common/tllmException.cpp",
         ],
         extra_cuda_cflags=sm100a_nvcc_flags
-        + [
-            "-DENABLE_BF16",
-            "-DENABLE_FP8",
-            "-DENABLE_FP4",
-        ],
-        extra_cflags=[
-            "-DENABLE_BF16",
-            "-DENABLE_FP8",
-            "-DENABLE_FP4",
-        ],
+        + ["-DENABLE_BF16", "-DENABLE_FP8", "-DENABLE_FP4"],
+        extra_cflags=["-DENABLE_BF16", "-DENABLE_FP8", "-DENABLE_FP4"],
         extra_include_paths=[
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal",
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal" / "include",
@@ -48,16 +36,13 @@ def gen_mxfp8_quantization_sm100_module() -> JitSpec:
 def get_mxfp8_quantization_sm100_module():
     module = gen_mxfp8_quantization_sm100_module().build_and_load()
 
-    @register_custom_op(
-        "flashinfer::mxfp8_quantize_sm100",
-        mutates_args=(""),
-    )
+    @register_custom_op("flashinfer::mxfp8_quantize_sm100", mutates_args="")
     def mxfp8_quantize_sm100(
-        input: torch.Tensor,
+        input: paddle.Tensor,
         is_sf_swizzled_layout: bool = True,
         alignment: int = 32,
         enable_pdl: Optional[bool] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
         """Quantize input tensor to MxFP8 format.
 
         Args:
@@ -72,41 +57,29 @@ def get_mxfp8_quantization_sm100_module():
                 - Scale factors tensor with shape determined by layout and sf_vec_size
         """
         if input.device.type == "cpu":
-            return module.mxfp8_quantize_host(
-                input,
-                is_sf_swizzled_layout,
-            )
+            return module.mxfp8_quantize_host(input, is_sf_swizzled_layout)
         else:
             if enable_pdl is None:
-                enable_pdl = device_support_pdl(input.device)
+                enable_pdl = device_support_pdl(input.place)
             return module.mxfp8_quantize(
-                input,
-                is_sf_swizzled_layout,
-                alignment,
-                enable_pdl,
+                input, is_sf_swizzled_layout, alignment, enable_pdl
             )
 
     @register_fake_op("flashinfer::mxfp8_quantize_sm100")
     def _fake_mxfp8_quantize_sm100(
-        input: torch.Tensor,
-        is_sf_swizzled_layout: bool = True,
-        alignment: int = 32,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        m, k = input.shape
-        return (
-            input.new_empty([m, k], dtype=torch.int64),  # FLOAT8_E4M3
-            input.new_empty([m * k // 32], dtype=torch.int32),  # Scale factors
+        input: paddle.Tensor, is_sf_swizzled_layout: bool = True, alignment: int = 32
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        m, k = tuple(input.shape)
+        return paddle.empty(shape=[m, k], dtype="int64"), paddle.empty(
+            shape=[m * k // 32], dtype="int32"
         )
 
-    @register_custom_op(
-        "flashinfer::mxfp8_dequantize_host_sm100",
-        mutates_args=("",),
-    )
+    @register_custom_op("flashinfer::mxfp8_dequantize_host_sm100", mutates_args=("",))
     def mxfp8_dequantize_host_sm100(
-        input: torch.Tensor,
-        scale_tensor: torch.Tensor,
+        input: paddle.Tensor,
+        scale_tensor: paddle.Tensor,
         is_sf_swizzled_layout: bool = True,
-    ) -> torch.Tensor:
+    ) -> paddle.Tensor:
         """Dequantize input tensor from MxFP8 format.
 
         Args:
@@ -117,21 +90,18 @@ def get_mxfp8_quantization_sm100_module():
         Returns:
             torch.Tensor: Dequantized float tensor of shape [M, K] with dtype float32.
         """
-        return module.mxfp8_dequantize_host(
-            input,
-            scale_tensor,
-            is_sf_swizzled_layout,
-        )
+        return module.mxfp8_dequantize_host(input, scale_tensor, is_sf_swizzled_layout)
 
     @register_fake_op("flashinfer::mxfp8_dequantize_host_sm100")
     def _fake_mxfp8_dequantize_host_sm100(
-        input: torch.Tensor,
-        scale_tensor: torch.Tensor,
+        input: paddle.Tensor,
+        scale_tensor: paddle.Tensor,
         is_sf_swizzled_layout: bool = True,
-    ) -> torch.Tensor:
-        return input.new_empty([input.shape[0], input.shape[1]], dtype=torch.float32)
+    ) -> paddle.Tensor:
+        return paddle.empty(
+            shape=[tuple(input.shape)[0], tuple(input.shape)[1]], dtype="float32"
+        )
 
-    # Register the module
     return SimpleNamespace(
         mxfp8_quantize_sm100=mxfp8_quantize_sm100,
         mxfp8_dequantize_host_sm100=mxfp8_dequantize_host_sm100,
@@ -139,11 +109,11 @@ def get_mxfp8_quantization_sm100_module():
 
 
 def mxfp8_quantize(
-    input: torch.Tensor,
+    input: paddle.Tensor,
     is_sf_swizzled_layout: bool = True,
     alignment: int = 32,
     enable_pdl: Optional[bool] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[paddle.Tensor, paddle.Tensor]:
     """Quantize input tensor to MxFP8 format.
 
     This function implements MxFP8 quantization that converts input tensors to a compressed MxFP8 format
@@ -161,24 +131,20 @@ def mxfp8_quantize(
             - Scale factors tensor with shape determined by layout and sf_vec_size
     """
     sf_vec_size = 32
-
-    assert input.shape[-1] % sf_vec_size == 0
+    assert tuple(input.shape)[-1] % sf_vec_size == 0
     if enable_pdl is None:
-        enable_pdl = device_support_pdl(input.device)
+        enable_pdl = device_support_pdl(input.place)
     x_q, sf = get_mxfp8_quantization_sm100_module().mxfp8_quantize_sm100(
-        input,
-        is_sf_swizzled_layout,
-        alignment,
-        enable_pdl,
+        input, is_sf_swizzled_layout, alignment, enable_pdl
     )
     return x_q, sf
 
 
 def mxfp8_dequantize_host(
-    input: torch.Tensor,
-    scale_tensor: torch.Tensor,
+    input: paddle.Tensor,
+    scale_tensor: paddle.Tensor,
     is_sf_swizzled_layout: bool = True,
-) -> torch.Tensor:
+) -> paddle.Tensor:
     """Dequantize input tensor from MxFP8 format.
 
     This function performs dequantization by converting a packed FP8 tensor in MxFP8 format
@@ -193,9 +159,6 @@ def mxfp8_dequantize_host(
         torch.Tensor: Dequantized float tensor of shape [M, K] with dtype float32.
 
     """
-
     return get_mxfp8_quantization_sm100_module().mxfp8_dequantize_host_sm100(
-        input,
-        scale_tensor,
-        is_sf_swizzled_layout,
+        input, scale_tensor, is_sf_swizzled_layout
     )

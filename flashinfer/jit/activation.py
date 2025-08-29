@@ -1,3 +1,5 @@
+import os
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,16 +15,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-import os
-
 import jinja2
 
 from . import env as jit_env
 from .core import JitSpec, gen_jit_spec
 from .utils import write_if_different
 
-activation_templ = r"""
+activation_templ = """
 #include <flashinfer/activation.cuh>
 #include "pytorch_extension_utils.h"
 #include <cuda_runtime.h>
@@ -80,11 +79,5 @@ def gen_act_and_mul_module(act_func_name: str, act_func_def: str) -> JitSpec:
     gen_directory = jit_env.FLASHINFER_GEN_SRC_DIR
     os.makedirs(gen_directory, exist_ok=True)
     sources = [gen_directory / f"{act_func_name}_and_mul.cu"]
-    write_if_different(
-        sources[0],
-        get_act_and_mul_cu_str(act_func_name, act_func_def),
-    )
-    return gen_jit_spec(
-        f"{act_func_name}_and_mul",
-        sources,
-    )
+    write_if_different(sources[0], get_act_and_mul_cu_str(act_func_name, act_func_def))
+    return gen_jit_spec(f"{act_func_name}_and_mul", sources)

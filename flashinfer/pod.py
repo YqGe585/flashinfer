@@ -1,3 +1,9 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,32 +19,20 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 import math
 from types import SimpleNamespace
 from typing import Any, List, Optional, Tuple, Union
 
-import torch
-
 from .jit import gen_pod_module
 from .page import get_seq_lens
 from .prefill import get_batch_prefill_module
 from .quantization import packbits
-from .utils import (
-    MaskMode,
-    PosEncodingMode,
-    TensorLayout,
-    _check_cached_qkv_data_type,
-    _check_kv_layout,
-    _check_pos_encoding_mode,
-    _get_cache_alibi_slopes_buf,
-    _get_cache_buf,
-    _get_range_buf,
-    _unpack_paged_kv_cache,
-    canonicalize_torch_dtype,
-    device_support_pdl,
-)
+from .utils import (MaskMode, PosEncodingMode, TensorLayout,
+                    _check_cached_qkv_data_type, _check_kv_layout,
+                    _check_pos_encoding_mode, _get_cache_alibi_slopes_buf,
+                    _get_cache_buf, _get_range_buf, _unpack_paged_kv_cache,
+                    canonicalize_torch_dtype, device_support_pdl)
 
 
 @functools.cache
@@ -48,7 +42,7 @@ def get_pod_module(*args):
 
 
 class PODWithPagedKVCacheWrapper:
-    r"""Wrapper class for POD-Attention with paged kv-cache (first proposed in
+    """Wrapper class for POD-Attention with paged kv-cache (first proposed in
     `<https://arxiv.org/abs/2410.18038>`_) for batch of requests.
 
     Check :ref:`our tutorial<kv-layout>` for page table layout.
@@ -115,15 +109,15 @@ class PODWithPagedKVCacheWrapper:
 
     def __init__(
         self,
-        float_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
         kv_layout: str = "NHD",
         use_cuda_graph: bool = False,
-        paged_kv_indptr_buffer: Optional[torch.Tensor] = None,
-        paged_kv_indices_buffer: Optional[torch.Tensor] = None,
-        paged_kv_last_page_len_buffer: Optional[torch.Tensor] = None,
+        paged_kv_indptr_buffer: Optional[paddle.Tensor] = None,
+        paged_kv_indices_buffer: Optional[paddle.Tensor] = None,
+        paged_kv_last_page_len_buffer: Optional[paddle.Tensor] = None,
         jit_args: Optional[List[Any]] = None,
     ) -> None:
-        r"""Constructor of :class:`PODWithPagedKVCacheWrapper`.
+        """Constructor of :class:`PODWithPagedKVCacheWrapper`.
 
         Parameters
         ----------
@@ -173,33 +167,27 @@ class PODWithPagedKVCacheWrapper:
                 )
         else:
         """
-        # Override options. Only tensor core version is performant.
         use_tensor_cores = True
         self._jit_module: SimpleNamespace = None
-
         self._kv_layout = kv_layout
         self._float_workspace_buffer = float_workspace_buffer
-        self.device = float_workspace_buffer.device
-        self._int_workspace_buffer = torch.empty(
-            (8 * 1024 * 1024,), dtype=torch.uint8, device=self.device
+        self.device = float_workspace_buffer.place
+        self._int_workspace_buffer = paddle.empty(
+            shape=(8 * 1024 * 1024,), dtype="uint8"
         )
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            (8 * 1024 * 1024,),
-            dtype=torch.uint8,
-            pin_memory=True,
-            device="cpu",
-        )
-
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=(8 * 1024 * 1024,), dtype="uint8"
+        ).pin_memory()
         if use_cuda_graph:
-            if not torch.is_tensor(paged_kv_indptr_buffer):
+            if not paddle.is_tensor(x=paged_kv_indptr_buffer):
                 raise ValueError(
                     "paged_kv_indptr_buffer should be a torch.Tensor in cudagraph mode"
                 )
-            if not torch.is_tensor(paged_kv_indices_buffer):
+            if not paddle.is_tensor(x=paged_kv_indices_buffer):
                 raise ValueError(
                     "paged_kv_indices_buffer should be a torch.Tensor in cudagraph mode"
                 )
-            if not torch.is_tensor(paged_kv_last_page_len_buffer):
+            if not paddle.is_tensor(x=paged_kv_last_page_len_buffer):
                 raise ValueError(
                     "paged_kv_last_page_len_buffer should be a torch.Tensor in cudagraph mode"
                 )
@@ -210,19 +198,14 @@ class PODWithPagedKVCacheWrapper:
                 )
         else:
             self._fixed_batch_size = 0
-
         self._paged_kv_indptr_buf = paged_kv_indptr_buffer
         self._paged_kv_indices_buf = paged_kv_indices_buffer
         self._paged_kv_last_page_len_buf = paged_kv_last_page_len_buffer
         self._use_tensor_cores = use_tensor_cores
         self._use_cuda_graph = use_cuda_graph
-
         if use_cuda_graph:
-            # NOTE(Zihao): if once created, no need to update it in plan/run
-            self._qo_indptr_buf = torch.arange(
-                self._fixed_batch_size + 1,
-                dtype=torch.int32,
-                device=float_workspace_buffer.device,
+            self._qo_indptr_buf = paddle.arange(
+                dtype="int32", end=self._fixed_batch_size + 1
             )
 
     @property
@@ -230,9 +213,9 @@ class PODWithPagedKVCacheWrapper:
         return self._use_cuda_graph
 
     def reset_workspace_buffer(
-        self, float_workspace_buffer: torch.Tensor, int_workspace_buffer: torch.Tensor
+        self, float_workspace_buffer: paddle.Tensor, int_workspace_buffer: paddle.Tensor
     ) -> None:
-        r"""Reset the workspace buffer.
+        """Reset the workspace buffer.
 
         Parameters
         ----------
@@ -246,33 +229,31 @@ class PODWithPagedKVCacheWrapper:
         """
         self._float_workspace_buffer = float_workspace_buffer
         self._int_workspace_buffer = int_workspace_buffer
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape),
             dtype=self._int_workspace_buffer.dtype,
-            device="cpu",
-            pin_memory=True,
-        )
+        ).pin_memory()
 
     def plan(
         self,
-        indptr: torch.Tensor,
-        indices: torch.Tensor,
-        last_page_len: torch.Tensor,
+        indptr: paddle.Tensor,
+        indices: paddle.Tensor,
+        last_page_len: paddle.Tensor,
         num_qo_heads: int,
         num_kv_heads: int,
         head_dim: int,
         page_size: int,
         pos_encoding_mode: str = "NONE",
         window_left: int = -1,
-        q_data_type: Optional[Union[str, torch.dtype]] = "float16",
-        kv_data_type: Optional[Union[str, torch.dtype]] = None,
-        data_type: Optional[Union[str, torch.dtype]] = None,
+        q_data_type: Optional[Union[str, paddle.dtype]] = "float16",
+        kv_data_type: Optional[Union[str, paddle.dtype]] = None,
+        data_type: Optional[Union[str, paddle.dtype]] = None,
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
         non_blocking: bool = True,
     ) -> None:
-        r"""Plan POD's batch decode for given problem specification.
+        """Plan POD's batch decode for given problem specification.
 
         Parameters
         ----------
@@ -322,16 +303,13 @@ class PODWithPagedKVCacheWrapper:
 
         The :meth:`plan` method cannot be used in Cuda Graph or in ``torch.compile``.
         """
-        # Logits soft cap is not supported currently
         batch_size = len(last_page_len)
         logits_soft_cap = 0.0
-
         qo_indptr_host = _get_range_buf(batch_size + 1, "cpu")
         if self.is_cuda_graph_enabled:
             if batch_size != self._fixed_batch_size:
                 raise ValueError(
-                    "The batch size should be fixed in cudagraph mode, the runtime batch size {} "
-                    " mismatches the batch size set during initialization {}".format(
+                    "The batch size should be fixed in cudagraph mode, the runtime batch size {}  mismatches the batch size set during initialization {}".format(
                         batch_size, self._fixed_batch_size
                     )
                 )
@@ -339,41 +317,33 @@ class PODWithPagedKVCacheWrapper:
                 raise ValueError(
                     "The size of indices should be less than or equal to the allocated buffer"
                 )
-            self._paged_kv_indptr_buf.copy_(indptr, non_blocking=non_blocking)
-            self._paged_kv_last_page_len_buf.copy_(
-                last_page_len, non_blocking=non_blocking
-            )
-            self._paged_kv_indices_buf[: len(indices)].copy_(
-                indices, non_blocking=(indices.device == self.device) and non_blocking
-            )
+            paddle.assign(indptr, output=self._paged_kv_indptr_buf)
+            paddle.assign(last_page_len, output=self._paged_kv_last_page_len_buf)
+            paddle.assign(indices, output=self._paged_kv_indices_buf[: len(indices)])
         else:
             self._paged_kv_indptr_buf = indptr.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
             self._paged_kv_indices_buf = indices.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
             self._paged_kv_last_page_len_buf = last_page_len.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
             self._qo_indptr_buf = qo_indptr_host.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
-
         indptr_host = indptr.to("cpu")
         last_page_len_host = last_page_len.to("cpu")
-
         if data_type is not None:
             if q_data_type is None:
                 q_data_type = data_type
             if kv_data_type is None:
                 kv_data_type = data_type
-
         q_data_type = canonicalize_torch_dtype(q_data_type)
         if kv_data_type is None:
             kv_data_type = q_data_type
         kv_data_type = canonicalize_torch_dtype(kv_data_type)
-
         self._cached_q_data_type = q_data_type
         self._cached_kv_data_type = kv_data_type
         kv_lens_arr_host = get_seq_lens(indptr_host, last_page_len_host, page_size)
@@ -386,12 +356,12 @@ class PODWithPagedKVCacheWrapper:
                 kv_data_type,
                 q_data_type,
                 indptr.dtype,
-                head_dim,  # head_dim_qk
-                head_dim,  # head_dim_vo
+                head_dim,
+                head_dim,
                 PosEncodingMode[pos_encoding_mode].value,
-                window_left != -1,  # use_sliding_window
-                logits_soft_cap > 0,  # use_logits_soft_cap
-                False,  # use_fp16_qk_reduction
+                window_left != -1,
+                logits_soft_cap > 0,
+                False,
             )
         self._plan_info = self._cached_module.plan(
             self._float_workspace_buffer,
@@ -400,7 +370,7 @@ class PODWithPagedKVCacheWrapper:
             qo_indptr_host,
             indptr_host,
             kv_lens_arr_host,
-            batch_size,  # total_num_rows
+            batch_size,
             batch_size,
             num_qo_heads,
             num_kv_heads,
@@ -408,9 +378,8 @@ class PODWithPagedKVCacheWrapper:
             self.is_cuda_graph_enabled,
             head_dim,
             head_dim,
-            False,  # causal
+            False,
         )
-
         self._indptr_type = indptr.dtype
         self._pos_encoding_mode = pos_encoding_mode
         self._window_left = window_left
@@ -423,15 +392,13 @@ class PODWithPagedKVCacheWrapper:
 
     def run(
         self,
-        # Main params (prefill and decode)
-        q_p: torch.Tensor,
-        k_p: torch.Tensor,
-        v_p: torch.Tensor,
-        q_d: torch.Tensor,
-        paged_kv_cache_d: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
-        # Prefill options
-        custom_mask_p: Optional[torch.Tensor] = None,
-        packed_custom_mask_p: Optional[torch.Tensor] = None,
+        q_p: paddle.Tensor,
+        k_p: paddle.Tensor,
+        v_p: paddle.Tensor,
+        q_d: paddle.Tensor,
+        paged_kv_cache_d: Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]],
+        custom_mask_p: Optional[paddle.Tensor] = None,
+        packed_custom_mask_p: Optional[paddle.Tensor] = None,
         causal_p: bool = False,
         kv_layout_p: str = "NHD",
         pos_encoding_mode_p: str = "NONE",
@@ -440,9 +407,8 @@ class PODWithPagedKVCacheWrapper:
         rope_scale_p: Optional[float] = None,
         rope_theta_p: Optional[float] = None,
         return_lse_p: bool = False,
-        # Decode options
-        custom_mask_d: Optional[torch.Tensor] = None,
-        packed_custom_mask_d: Optional[torch.Tensor] = None,
+        custom_mask_d: Optional[paddle.Tensor] = None,
+        packed_custom_mask_d: Optional[paddle.Tensor] = None,
         causal_d: bool = False,
         kv_layout_d: str = "NHD",
         pos_encoding_mode_d: str = "NONE",
@@ -456,55 +422,42 @@ class PODWithPagedKVCacheWrapper:
         return_lse_d: bool = False,
         use_fp16_qk_reduction: bool = False,
         enable_pdl: Optional[bool] = None,
-        *args,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        r"""Compute POD-attention for a batch of requests."""
+        *args
+    ) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
+        """Compute POD-attention for a batch of requests."""
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(q_p.device)
-
-        # Currently unsupported
+            enable_pdl = device_support_pdl(q_p.place)
         logits_soft_cap_p = None
         logits_soft_cap_d = None
-        # Prefill setup
         _check_pos_encoding_mode(pos_encoding_mode_p)
         _check_kv_layout(kv_layout_p)
-        tmp_p = _get_cache_buf("pod_with_kv_cache_tmp", 32 * 1024 * 1024, q_p.device)
+        tmp_p = _get_cache_buf("pod_with_kv_cache_tmp", 32 * 1024 * 1024, q_p.place)
         if logits_soft_cap_p is None:
             logits_soft_cap_p = 0.0
         if sm_scale_p is None:
-            sm_scale_p = 1.0 / math.sqrt(q_p.size(-1))
+            sm_scale_p = 1.0 / math.sqrt(q_p.shape[-1])
         if rope_scale_p is None:
             rope_scale_p = 1.0
         if rope_theta_p is None:
-            rope_theta_p = 1e4
+            rope_theta_p = 10000.0
         if custom_mask_p is not None and packed_custom_mask_p is None:
-            # create packed custom mask from custom mask
             packed_custom_mask_p = packbits(
                 custom_mask_p.contiguous().view(-1), bitorder="little"
             )
-
         if packed_custom_mask_p is not None:
             mask_mode_p = MaskMode.CUSTOM.value
+        elif causal_p:
+            mask_mode_p = MaskMode.CAUSAL.value
         else:
-            if causal_p:
-                mask_mode_p = MaskMode.CAUSAL.value
-            else:
-                mask_mode_p = MaskMode.NON_CAUSAL.value
-
+            mask_mode_p = MaskMode.NON_CAUSAL.value
         lse_p = None
         if return_lse_p:
-            lse_p = torch.empty(
-                (q_p.size(0), q_p.size(1)), dtype=torch.float32, device=q_p.device
-            )
-
-        out_p = torch.empty_like(q_p)
-
-        # Decode setup
+            lse_p = paddle.empty(shape=(q_p.shape[0], q_p.shape[1]), dtype="float32")
+        out_p = paddle.empty_like(x=q_p)
         k_cache_d, v_cache_d = _unpack_paged_kv_cache(paged_kv_cache_d, self._kv_layout)
         _check_cached_qkv_data_type(
             q_d, k_cache_d, self._cached_q_data_type, self._cached_kv_data_type
         )
-        # TODO_AK: Where are these coming from?
         pos_encoding_mode_d = self._pos_encoding_mode
         window_left_d = self._window_left
         logits_soft_cap_d = self._logits_soft_cap
@@ -512,11 +465,10 @@ class PODWithPagedKVCacheWrapper:
         rope_scale_d = self._rope_scale
         rope_theta_d = self._rope_theta
         _check_pos_encoding_mode(pos_encoding_mode_d)
-        # What are the above for and what are the below?
         if logits_soft_cap_d is None:
             logits_soft_cap_d = 0.0
         if sm_scale_d is None:
-            head_dim = q_d.shape[-1]
+            head_dim = tuple(q_d.shape)[-1]
             sm_scale_d = 1.0 / math.sqrt(head_dim)
         if q_scale is not None:
             sm_scale_d *= q_scale
@@ -525,38 +477,26 @@ class PODWithPagedKVCacheWrapper:
         if rope_scale_d is None:
             rope_scale_d = 1.0
         if rope_theta_d is None:
-            rope_theta_d = 1e4
-
+            rope_theta_d = 10000.0
         lse_d = None
         if return_lse_d:
-            lse_d = torch.empty(
-                (q_d.size(0), q_d.size(1)), dtype=torch.float32, device=q_d.device
-            )
-        out_d = torch.empty_like(q_d)
-
+            lse_d = paddle.empty(shape=(q_d.shape[0], q_d.shape[1]), dtype="float32")
+        out_d = paddle.empty_like(x=q_d)
         module_getter = get_pod_module(
-            # Prefill params
             q_p.dtype,
             k_p.dtype,
             q_p.dtype,
-            q_p.shape[-1],
+            tuple(q_p.shape)[-1],
             PosEncodingMode[pos_encoding_mode_p].value,
-            window_left_p >= 0,  # use_sliding_window
-            logits_soft_cap_p > 0,  # use_logits_soft_cap
+            window_left_p >= 0,
+            logits_soft_cap_p > 0,
             use_fp16_qk_reduction,
-            # Decode params
-            # q_d.dtype,
-            # self._cached_kv_data_type,
-            # self._cached_q_data_type,
             self._indptr_type,
-            # head_dim,  # head_dim_qk
-            # head_dim,  # head_dim_vo
             PosEncodingMode[pos_encoding_mode_d].value,
-            window_left_d != -1,  # use_sliding_window
-            logits_soft_cap_d > 0,  # use_logits_soft_cap
+            window_left_d != -1,
+            logits_soft_cap_d > 0,
         )
         module_getter.run_tensor(
-            # Prefill params
             q_p,
             k_p,
             v_p,
@@ -567,12 +507,11 @@ class PODWithPagedKVCacheWrapper:
             TensorLayout[kv_layout_p].value,
             window_left_p,
             packed_custom_mask_p,
-            _get_cache_alibi_slopes_buf(q_p.shape[1], q_p.device),
+            _get_cache_alibi_slopes_buf(tuple(q_p.shape)[1], q_p.place),
             logits_soft_cap_p,
             sm_scale_p,
             1.0 / rope_scale_p,
             1.0 / rope_theta_p,
-            # Decode params
             self._float_workspace_buffer,
             self._int_workspace_buffer,
             self._plan_info,
@@ -588,21 +527,19 @@ class PODWithPagedKVCacheWrapper:
             MaskMode.NON_CAUSAL.value,
             TensorLayout[self._kv_layout].value,
             window_left_d,
-            None,  # packed_custom_mask
-            None,  # mask_indptr_buf
-            _get_cache_alibi_slopes_buf(q_d.shape[1], q_d.device),
+            None,
+            None,
+            _get_cache_alibi_slopes_buf(tuple(q_d.shape)[1], q_d.place),
             logits_soft_cap_d,
             sm_scale_d,
             1.0 / rope_scale_d,
             1.0 / rope_theta_d,
             enable_pdl,
         )
-
         if v_scale is not None:
             out_d *= v_scale
-
-        return (out_p, out_d)
+        return out_p, out_d
 
     def end_forward(self) -> None:
-        r"""Warning: this function is deprecated and has no effect."""
+        """Warning: this function is deprecated and has no effect."""
         pass

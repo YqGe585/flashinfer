@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,12 +15,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from types import SimpleNamespace
 from typing import List, Tuple
-
-import torch
 
 from ..jit import JitSpec
 from ..jit import env as jit_env
@@ -28,10 +27,7 @@ from ..utils import register_custom_op
 
 def gen_vllm_comm_module() -> JitSpec:
     return gen_jit_spec(
-        "vllm_comm",
-        [
-            jit_env.FLASHINFER_CSRC_DIR / "vllm_custom_all_reduce.cu",
-        ],
+        "vllm_comm", [jit_env.FLASHINFER_CSRC_DIR / "vllm_custom_all_reduce.cu"]
     )
 
 
@@ -39,13 +35,12 @@ def gen_vllm_comm_module() -> JitSpec:
 def get_vllm_comm_module():
     module = gen_vllm_comm_module().build_and_load()
 
-    # torch library for all
     @register_custom_op(
         "flashinfer::init_custom_ar",
         mutates_args=["ipc_ptrs", "rank_data", "rank", "full_nvlink"],
     )
     def init_custom_ar(
-        ipc_ptrs: List[int], rank_data: torch.Tensor, rank: int, full_nvlink: bool
+        ipc_ptrs: List[int], rank_data: paddle.Tensor, rank: int, full_nvlink: bool
     ) -> int:
         return module.init_custom_ar(ipc_ptrs, rank_data, rank, full_nvlink)
 
@@ -61,11 +56,10 @@ def get_vllm_comm_module():
         "flashinfer::register_buffer", mutates_args=["fa", "fake_ipc_ptrs"]
     )
     def register_buffer(fa: int, fake_ipc_ptrs: List[int]) -> None:
-        return module.register_buffer(fa, fake_ipc_ptrs)
+        return module.register_buffer(name=fa, tensor=fake_ipc_ptrs)
 
     @register_custom_op(
-        "flashinfer::register_graph_buffers",
-        mutates_args=["fa", "handles", "offsets"],
+        "flashinfer::register_graph_buffers", mutates_args=["fa", "handles", "offsets"]
     )
     def register_graph_buffers(
         fa: int, handles: List[List[int]], offsets: List[List[int]]
@@ -82,8 +76,8 @@ def get_vllm_comm_module():
     )
     def all_reduce(
         fa: int,
-        inp: torch.Tensor,
-        out: torch.Tensor,
+        inp: paddle.Tensor,
+        out: paddle.Tensor,
         reg_buffer: int,
         reg_buffer_sz_bytes: int,
         num_ctas: int,
@@ -102,7 +96,7 @@ def get_vllm_comm_module():
 
 
 def init_custom_ar(
-    ipc_tensors: List[int], rank_data: torch.Tensor, rank: int, full_nvlink: bool
+    ipc_tensors: List[int], rank_data: paddle.Tensor, rank: int, full_nvlink: bool
 ) -> int:
     return get_vllm_comm_module().init_custom_ar(
         ipc_tensors, rank_data, rank, full_nvlink
@@ -115,8 +109,8 @@ def dispose(fa: int) -> None:
 
 def all_reduce(
     fa: int,
-    inp: torch.Tensor,
-    out: torch.Tensor,
+    inp: paddle.Tensor,
+    out: paddle.Tensor,
     reg_buffer: int,
     reg_buffer_sz_bytes: int,
     num_ctas: int,
@@ -142,7 +136,7 @@ def get_graph_buffer_ipc_meta(fa) -> Tuple[List[int], List[int]]:
 
 
 def register_buffer(fa: int, fake_ipc_ptrs: List[int]) -> None:
-    return get_vllm_comm_module().register_buffer(fa, fake_ipc_ptrs)
+    return get_vllm_comm_module().register_buffer(name=fa, tensor=fake_ipc_ptrs)
 
 
 def register_graph_buffers(

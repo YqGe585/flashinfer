@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,11 +15,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import functools
 from typing import Literal, Optional, Tuple, Union, overload
-
-import torch
 
 from .jit import JitSpec
 from .jit import env as jit_env
@@ -34,23 +33,23 @@ def _check_cutlass_shape(q_nope_pe, ckv_kpe_cache, kv_len, page_table):
         raise ValueError(f"Expected kv_len.ndim == 1, got {kv_len.ndim}")
     if page_table.ndim != 2:
         raise ValueError(f"Expected page_table.ndim == 2, got {page_table.ndim}")
-    B_q, H, D_q = q_nope_pe.shape
-    D_ckv = ckv_kpe_cache.shape[2]
+    B_q, H, D_q = tuple(q_nope_pe.shape)
+    D_ckv = tuple(ckv_kpe_cache.shape)[2]
     if H != 128:
         raise ValueError(f"Expected 128 heads for q_nope_pe, got {H}")
     if D_q != D_ckv or D_q != 576:
         raise ValueError(
             f"Expected head dim 576 for q_nope_pe and ckv_kpe_cache, got {D_q} and {D_ckv}"
         )
-    B_block_table, block_num = page_table.shape
-    block_size = ckv_kpe_cache.shape[1]
+    B_block_table, block_num = tuple(page_table.shape)
+    block_size = tuple(ckv_kpe_cache.shape)[1]
     if B_q != B_block_table:
         raise ValueError(
             f"Expected batch size {B_q} for q_nope_pe and block_table, got {B_q} and {B_block_table}"
         )
     if block_num % (128 / block_size) != 0:
         raise ValueError(
-            f"Expected block_num % (128 / block_size) == 0, got {block_num=} and {block_size=}"
+            f"Expected block_num % (128 / block_size) == 0, got block_num={block_num!r} and block_size={block_size!r}"
         )
 
 
@@ -76,7 +75,7 @@ def get_batch_mla_module(backend, *args):
 
 
 class BatchMLAPagedAttentionWrapper:
-    r"""Wrapper class for MLA (`Multi-head Latent Attention <https://arxiv.org/abs/2405.04434>`_)
+    """Wrapper class for MLA (`Multi-head Latent Attention <https://arxiv.org/abs/2405.04434>`_)
     PagedAttention on DeepSeek models. This kernel can be used in decode, and incremental prefill
     and should be used together with `Matrix Absorption trick
     <https://github.com/madsys-dev/deepseekv2-profile/blob/main/workspace/blog/optimizing-mla.md>`_:
@@ -143,15 +142,15 @@ class BatchMLAPagedAttentionWrapper:
 
     def __init__(
         self,
-        float_workspace_buffer: torch.Tensor,
+        float_workspace_buffer: paddle.Tensor,
         use_cuda_graph: bool = False,
-        qo_indptr: Optional[torch.Tensor] = None,
-        kv_indptr: Optional[torch.Tensor] = None,
-        kv_indices: Optional[torch.Tensor] = None,
-        kv_len_arr: Optional[torch.Tensor] = None,
+        qo_indptr: Optional[paddle.Tensor] = None,
+        kv_indptr: Optional[paddle.Tensor] = None,
+        kv_indices: Optional[paddle.Tensor] = None,
+        kv_len_arr: Optional[paddle.Tensor] = None,
         backend: str = "auto",
     ) -> None:
-        r"""Constructor for BatchMLAPagedAttentionWrapper.
+        """Constructor for BatchMLAPagedAttentionWrapper.
 
         Parameters
         ----------
@@ -186,21 +185,17 @@ class BatchMLAPagedAttentionWrapper:
             other arguments are ignored.
         """
         self._float_workspace_buffer = float_workspace_buffer
-        self.device = float_workspace_buffer.device
-
+        self.device = float_workspace_buffer.place
         if backend == "cutlass":
             self._backend = backend
             return
-
-        self._int_workspace_buffer = torch.empty(
-            (8 * 1024 * 1024,), dtype=torch.uint8, device=self.device
+        self._int_workspace_buffer = paddle.empty(
+            shape=(8 * 1024 * 1024,), dtype="uint8"
         )
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape),
             dtype=self._int_workspace_buffer.dtype,
-            pin_memory=True,
-            device="cpu",
-        )
+        ).pin_memory()
         self._use_cuda_graph = use_cuda_graph
         self._qo_indptr_buf = qo_indptr
         self._kv_indptr_buf = kv_indptr
@@ -213,21 +208,21 @@ class BatchMLAPagedAttentionWrapper:
 
     def plan(
         self,
-        qo_indptr: torch.Tensor,
-        kv_indptr: torch.Tensor,
-        kv_indices: torch.Tensor,
-        kv_len_arr: torch.Tensor,
+        qo_indptr: paddle.Tensor,
+        kv_indptr: paddle.Tensor,
+        kv_indices: paddle.Tensor,
+        kv_len_arr: paddle.Tensor,
         num_heads: int,
         head_dim_ckv: int,
         head_dim_kpe: int,
         page_size: int,
         causal: bool,
         sm_scale: float,
-        q_data_type: torch.dtype,
-        kv_data_type: torch.dtype,
+        q_data_type: paddle.dtype,
+        kv_data_type: paddle.dtype,
         use_profiler: bool = False,
     ) -> None:
-        r"""Plan the MLA attention computation.
+        """Plan the MLA attention computation.
 
         Parameters
         ----------
@@ -260,18 +255,16 @@ class BatchMLAPagedAttentionWrapper:
         use_profiler : bool, optional
             Whether to enable intra-kernel profiler, default is False.
         """
-
         for tensor, name in [
             (kv_len_arr, "kv_len_arr"),
             (kv_indptr, "kv_indptr"),
             (qo_indptr, "qo_indptr"),
             (kv_indices, "kv_indices"),
         ]:
-            if tensor.dtype != torch.int32:
+            if tensor.dtype != "int32":
                 raise ValueError(
                     f"Expected {name}.dtype == torch.int32, got {tensor.dtype}"
                 )
-
         self._cached_module = get_batch_mla_module(
             self._backend,
             q_data_type,
@@ -285,22 +278,20 @@ class BatchMLAPagedAttentionWrapper:
         qo_indptr_host = qo_indptr.to("cpu")
         kv_indptr_host = kv_indptr.to("cpu")
         kv_len_arr_host = kv_len_arr.to("cpu")
-
         if self._use_cuda_graph:
-            self._qo_indptr_buf.copy_(qo_indptr, non_blocking=True)
-            self._kv_indptr_buf.copy_(kv_indptr, non_blocking=True)
-            self._kv_indices_buf[: len(kv_indices)].copy_(kv_indices, non_blocking=True)
-            self._kv_len_arr_buf.copy_(kv_len_arr, non_blocking=True)
+            paddle.assign(qo_indptr, output=self._qo_indptr_buf)
+            paddle.assign(kv_indptr, output=self._kv_indptr_buf)
+            paddle.assign(kv_indices, output=self._kv_indices_buf[: len(kv_indices)])
+            paddle.assign(kv_len_arr, output=self._kv_len_arr_buf)
         else:
-            self._qo_indptr_buf = qo_indptr.to(self.device, non_blocking=True)
-            self._kv_indptr_buf = kv_indptr.to(self.device, non_blocking=True)
-            self._kv_indices_buf = kv_indices.to(self.device, non_blocking=True)
-            self._kv_len_arr_buf = kv_len_arr.to(self.device, non_blocking=True)
+            self._qo_indptr_buf = qo_indptr.to(self.device, blocking=not True)
+            self._kv_indptr_buf = kv_indptr.to(self.device, blocking=not True)
+            self._kv_indices_buf = kv_indices.to(self.device, blocking=not True)
+            self._kv_len_arr_buf = kv_len_arr.to(self.device, blocking=not True)
         self._causal = causal
         self._page_size = page_size
         self._sm_scale = sm_scale
         self._use_profiler = use_profiler
-
         self._plan_info = self._cached_module.plan.default(
             self._float_workspace_buffer,
             self._int_workspace_buffer,
@@ -309,54 +300,56 @@ class BatchMLAPagedAttentionWrapper:
             kv_indptr_host,
             kv_len_arr_host,
             num_heads,
-            head_dim_ckv,  # head_dim_o
+            head_dim_ckv,
             causal,
         )
 
     @overload
     def run(
         self,
-        q_nope: torch.Tensor,
-        q_pe: torch.Tensor,
-        ckv_cache: torch.Tensor,
-        kpe_cache: torch.Tensor,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        q_nope: paddle.Tensor,
+        q_pe: paddle.Tensor,
+        ckv_cache: paddle.Tensor,
+        kpe_cache: paddle.Tensor,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: Literal[False] = False,
-        profiler_buffer: Optional[torch.Tensor] = None,
-        kv_len: Optional[torch.Tensor] = None,
-        page_table: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor: ...
+        profiler_buffer: Optional[paddle.Tensor] = None,
+        kv_len: Optional[paddle.Tensor] = None,
+        page_table: Optional[paddle.Tensor] = None,
+    ) -> paddle.Tensor:
+        ...
 
     @overload
     def run(
         self,
-        q_nope: torch.Tensor,
-        q_pe: torch.Tensor,
-        ckv_cache: torch.Tensor,
-        kpe_cache: torch.Tensor,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        q_nope: paddle.Tensor,
+        q_pe: paddle.Tensor,
+        ckv_cache: paddle.Tensor,
+        kpe_cache: paddle.Tensor,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: Literal[True] = True,
-        profiler_buffer: Optional[torch.Tensor] = None,
-        kv_len: Optional[torch.Tensor] = None,
-        page_table: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]: ...
+        profiler_buffer: Optional[paddle.Tensor] = None,
+        kv_len: Optional[paddle.Tensor] = None,
+        page_table: Optional[paddle.Tensor] = None,
+    ) -> Tuple[paddle.Tensor, paddle.Tensor]:
+        ...
 
     def run(
         self,
-        q_nope: torch.Tensor,
-        q_pe: torch.Tensor,
-        ckv_cache: torch.Tensor,
-        kpe_cache: torch.Tensor,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        q_nope: paddle.Tensor,
+        q_pe: paddle.Tensor,
+        ckv_cache: paddle.Tensor,
+        kpe_cache: paddle.Tensor,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: bool = False,
-        profiler_buffer: Optional[torch.Tensor] = None,
-        kv_len: Optional[torch.Tensor] = None,
-        page_table: Optional[torch.Tensor] = None,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        r"""Run the MLA attention computation.
+        profiler_buffer: Optional[paddle.Tensor] = None,
+        kv_len: Optional[paddle.Tensor] = None,
+        page_table: Optional[paddle.Tensor] = None,
+    ) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
+        """Run the MLA attention computation.
 
         Parameters
         ----------
@@ -392,15 +385,15 @@ class BatchMLAPagedAttentionWrapper:
                 )
             self._cached_module = get_mla_module()
             if out is None:
-                out = torch.empty_like(q_nope)
+                out = paddle.empty_like(x=q_nope)
             else:
                 check_shape_dtype_device(
-                    out, q_nope.shape, q_nope.dtype, q_nope.device, "out"
+                    out, tuple(q_nope.shape), q_nope.dtype, q_nope.place, "out"
                 )
-            q_nope_pe = torch.cat([q_nope, q_pe], dim=-1)
-            ckv_kpe_cache = torch.cat([ckv_cache, kpe_cache], dim=-1)
+            q_nope_pe = paddle.concat(x=[q_nope, q_pe], axis=-1)
+            ckv_kpe_cache = paddle.concat(x=[ckv_cache, kpe_cache], axis=-1)
             _check_cutlass_shape(q_nope_pe, ckv_kpe_cache, kv_len, page_table)
-            lse = torch.empty(0, dtype=torch.float32, device=self.device)
+            lse = paddle.empty(shape=[0], dtype="float32")
             self._cached_module.cutlass_mla_paged_attention.default(
                 self._float_workspace_buffer,
                 out,
@@ -411,31 +404,29 @@ class BatchMLAPagedAttentionWrapper:
                 page_table,
             )
             return out
-
         if profiler_buffer is None:
             if self._use_profiler:
                 raise ValueError(
                     "Profiler is enabled, profiler_buffer must be provided"
                 )
-        num_heads = q_nope.shape[1]
+        num_heads = tuple(q_nope.shape)[1]
         page_size = self._page_size
         sm_scale = self._sm_scale
         causal = self._causal
         mask_mode = MaskMode.CAUSAL.value if causal else MaskMode.NON_CAUSAL.value
         device = self.device
         if out is None:
-            out = torch.empty_like(q_nope)
+            out = paddle.empty_like(x=q_nope)
         else:
             check_shape_dtype_device(
-                out, q_nope.shape, q_nope.dtype, q_nope.device, "out"
+                out, tuple(q_nope.shape), q_nope.dtype, q_nope.place, "out"
             )
-
         if return_lse:
             if lse is None:
-                lse = torch.empty(q_nope.shape[:2], dtype=torch.float32, device=device)
+                lse = paddle.empty(shape=tuple(q_nope.shape)[:2], dtype="float32")
             else:
                 check_shape_dtype_device(
-                    lse, q_nope.shape[:2], torch.float32, q_nope.device, "lse"
+                    lse, tuple(q_nope.shape)[:2], "float32", q_nope.place, "lse"
                 )
         profiler_args = (profiler_buffer,) if self._use_profiler else ()
         self._cached_module.run.default(
@@ -455,5 +446,4 @@ class BatchMLAPagedAttentionWrapper:
             sm_scale,
             *profiler_args,
         )
-
         return (out, lse) if return_lse else out

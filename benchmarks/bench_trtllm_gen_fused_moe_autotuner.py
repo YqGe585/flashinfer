@@ -1,38 +1,26 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
 import argparse
-from typing import Optional, Literal
-import torch
+from typing import Literal, Optional
+
 import numpy as np
-from flashinfer import (
-    RoutingMethodType,
-    GatedActType,
-    fp4_quantize,
-    mxfp8_quantize,
-    next_positive_power_of_2,
-)
-from flashinfer.fused_moe import trtllm_fp4_block_scale_moe
+import paddle
+from paddle_utils import *
+
+from flashinfer import (GatedActType, RoutingMethodType, fp4_quantize,
+                        mxfp8_quantize, next_positive_power_of_2)
 from flashinfer.autotuner import autotune
+from flashinfer.fused_moe import trtllm_fp4_block_scale_moe
 from flashinfer.testing.utils import bench_gpu_time
 from flashinfer.utils import device_support_pdl
 
 
 def get_tile_tokens_dim(num_tokens, num_experts, top_k):
-    # Factor to account for the imbalance of the experts.
-    # factor equals to the
-    # max_real_num_tokens_per_expert / perfect_num_tokens_per_expert
-    # - 1.0 means perfect expert distribution.
-    # - > 1.0 means some experts have more
-    #     tokens than the perfect distribution.
-    # - < 1.0 does not make sense.
     imbalance_factor = 1.3
-    # Calculate the number of tokens per expert
-    # assuming perfect distribution.
-    num_tokens_per_expert = (num_tokens * top_k) // num_experts
-    # Apply the imbalance factor.
+    num_tokens_per_expert = num_tokens * top_k // num_experts
     num_tokens_per_expert = int(num_tokens_per_expert * imbalance_factor)
-    # And pad the number to the next power of 2.
     tile_tokens_dim = next_positive_power_of_2(num_tokens_per_expert)
-    # Cap to 8-64 tokens per CTA tile
-    # as it's the range supported by the kernel.
     tile_tokens_dim = min(max(tile_tokens_dim, 8), 64)
     return tile_tokens_dim
 
@@ -48,101 +36,101 @@ def bench_trtllm_gen_fused_moe_autotuner(
     warmups: int,
     iterations: int,
 ):
-    device = torch.device("cuda:0")
+    device = device2str("cuda:0")
     enable_pdl = device_support_pdl(device)
-    routing_logits = torch.rand(num_tokens, num_experts, device=device).to(
-        torch.bfloat16
-    )
-    hidden_states = torch.randn(num_tokens, hidden_size, device=device).to(
-        torch.bfloat16
-    )
+    routing_logits = paddle.rand(shape=[num_tokens, num_experts]).to("bfloat16")
+    hidden_states = paddle.randn(shape=[num_tokens, hidden_size]).to("bfloat16")
     if quant_mode == "NvFP4xNvFP4":
         hidden_states, hidden_states_scale = fp4_quantize(
             hidden_states,
-            torch.tensor([448.0 * 6.0], device=device),
+            paddle.to_tensor(data=[448.0 * 6.0], place=device),
             sf_vec_size=16,
             sf_use_ue8m0=False,
         )
-        hidden_states_scale = hidden_states_scale.view(torch.float8_e4m3fn).reshape(
+>>>>>>        hidden_states_scale = hidden_states_scale.view(torch.float8_e4m3fn).reshape(
             num_tokens, -1
         )
         hidden_states_global_scale = 1.0 / 448.0 / 6.0
     elif quant_mode == "MxFP4xMxFP8":
         hidden_states, hidden_states_scale = mxfp8_quantize(hidden_states, False)
-        hidden_states_scale = hidden_states_scale.view(torch.float8_e4m3fn).reshape(
+>>>>>>        hidden_states_scale = hidden_states_scale.view(torch.float8_e4m3fn).reshape(
             num_tokens, -1
         )
         hidden_states_global_scale = 1.0
-    else:  # MxFP4xBf16
+    else:
         hidden_states_scale = None
         hidden_states_global_scale = 1.0
-
-    w13 = torch.randn(
-        num_experts, intermediate_size * 2, hidden_size, device=device
-    ).to(torch.bfloat16)
-    w2 = torch.randn(num_experts, hidden_size, intermediate_size, device=device).to(
-        torch.bfloat16
+    w13 = paddle.randn(shape=[num_experts, intermediate_size * 2, hidden_size]).to(
+        "bfloat16"
+    )
+    w2 = paddle.randn(shape=[num_experts, hidden_size, intermediate_size]).to(
+        "bfloat16"
     )
     if quant_mode == "NvFP4xNvFP4":
         w13, w13_scale = fp4_quantize(
             w13,
-            torch.tensor([448.0 * 6.0], device=device),
+            paddle.to_tensor(data=[448.0 * 6.0], place=device),
             sf_vec_size=16,
             sf_use_ue8m0=False,
         )
-        w13_scale = w13_scale.view(torch.float8_e4m3fn).reshape(
+>>>>>>        w13_scale = w13_scale.view(torch.float8_e4m3fn).reshape(
             num_experts, intermediate_size * 2, -1
         )
         w2, w2_scale = fp4_quantize(
             w2,
-            torch.tensor([448.0 * 6.0], device=device),
+            paddle.to_tensor(data=[448.0 * 6.0], place=device),
             sf_vec_size=16,
             sf_use_ue8m0=False,
         )
-        w2_scale = w2_scale.view(torch.float8_e4m3fn).reshape(
+>>>>>>        w2_scale = w2_scale.view(torch.float8_e4m3fn).reshape(
             num_experts, hidden_size, -1
         )
         w13_global_scale = 1.0 / 448.0 / 6.0
         w2_global_scale = 1.0 / 448.0 / 6.0
     else:
         w13, w13_scale = fp4_quantize(
-            w13, torch.tensor([1.0], device=device), sf_vec_size=32, sf_use_ue8m0=True
+            w13,
+            paddle.to_tensor(data=[1.0], place=device),
+            sf_vec_size=32,
+            sf_use_ue8m0=True,
         )
-        w13_scale = w13_scale.view(torch.float8_e4m3fn).reshape(
+>>>>>>        w13_scale = w13_scale.view(torch.float8_e4m3fn).reshape(
             num_experts, intermediate_size * 2, -1
         )
         w2, w2_scale = fp4_quantize(
-            w2, torch.tensor([1.0], device=device), sf_vec_size=32, sf_use_ue8m0=True
+            w2,
+            paddle.to_tensor(data=[1.0], place=device),
+            sf_vec_size=32,
+            sf_use_ue8m0=True,
         )
-        w2_scale = w2_scale.view(torch.float8_e4m3fn).reshape(
+>>>>>>        w2_scale = w2_scale.view(torch.float8_e4m3fn).reshape(
             num_experts, hidden_size, -1
         )
         w13_global_scale = 1.0
         w2_global_scale = 1.0
-    bias13 = torch.randn(num_experts, intermediate_size * 2, device=device) * 10
-    bias2 = torch.randn(num_experts, intermediate_size * 2, device=device) * 10
-
+    bias13 = paddle.randn(shape=[num_experts, intermediate_size * 2]) * 10
+    bias2 = paddle.randn(shape=[num_experts, intermediate_size * 2]) * 10
     tile_tokens_dim = get_tile_tokens_dim(num_tokens, num_experts, top_k)
-    output1_scale_scalar = torch.tensor(
-        [hidden_states_global_scale * w13_global_scale] * num_experts, device=device
+    output1_scale_scalar = paddle.to_tensor(
+        data=[hidden_states_global_scale * w13_global_scale] * num_experts, place=device
     )
-    output1_scale_gate_scalar = torch.tensor(
-        [hidden_states_global_scale * w13_global_scale] * num_experts, device=device
+    output1_scale_gate_scalar = paddle.to_tensor(
+        data=[hidden_states_global_scale * w13_global_scale] * num_experts, place=device
     )
-    output2_scale_scalar = torch.tensor(
-        [hidden_states_global_scale * w2_global_scale] * num_experts, device=device
+    output2_scale_scalar = paddle.to_tensor(
+        data=[hidden_states_global_scale * w2_global_scale] * num_experts, place=device
     )
     fn = lambda: trtllm_fp4_block_scale_moe(
         routing_logits,
-        None,  # routing_bias
+        None,
         hidden_states,
         hidden_states_scale,
         w13,
         w13_scale,
         bias13,
-        None,  # gemm1_alpha
-        None,  # gemm1_beta
-        None,  # gemm1_clamp_limit
+        None,
+        None,
+        None,
         w2,
         w2_scale,
         bias2,
@@ -151,30 +139,26 @@ def bench_trtllm_gen_fused_moe_autotuner(
         output2_scale_scalar,
         num_experts,
         top_k,
-        None,  # n_group
-        None,  # topk_group
+        None,
+        None,
         intermediate_size,
-        0,  # local_expert_offset
+        0,
         num_experts,
-        None,  # routed_scaling_factor
+        None,
         tile_tokens_dim,
         RoutingMethodType.Renormalize.value[0],
         True,
         enable_pdl,
-        GatedActType.SwiGlu.value,  # gated_act_type
+        GatedActType.SwiGlu.value,
         None,
         num_tokens if tune_max_num_tokens is None else tune_max_num_tokens,
     )
 
     def bench(do_autotune):
-        # warmup
         with autotune(do_autotune):
             for _ in range(warmups):
                 fn()
-        ms_list = bench_gpu_time(
-            fn,
-            repeat_iters=iterations,
-        )
+        ms_list = bench_gpu_time(fn, repeat_iters=iterations)
         median_ms = np.median(ms_list)
         return median_ms
 

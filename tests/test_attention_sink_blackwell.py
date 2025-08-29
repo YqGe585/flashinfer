@@ -1,3 +1,10 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import einops
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,16 +20,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-import einops
 import pytest
-import torch
 from sink_attention_reference import sink_attention_unified
 
 import flashinfer
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
 @pytest.mark.parametrize("batch_size", [1, 4, 16])
 @pytest.mark.parametrize("page_size", [32])
 @pytest.mark.parametrize("seq_len", [32, 128, 1024])
@@ -30,50 +34,28 @@ import flashinfer
 @pytest.mark.parametrize("num_kv_heads", [8, 32])
 @pytest.mark.parametrize("head_dim", [64, 128])
 def test_blackwell_trtllm_gen_decode_attention_sink(
-    dtype,
-    batch_size,
-    page_size,
-    seq_len,
-    num_qo_heads,
-    num_kv_heads,
-    head_dim,
+    dtype, batch_size, page_size, seq_len, num_qo_heads, num_kv_heads, head_dim
 ):
     seed = 0
-    torch.manual_seed(seed)
+    paddle.seed(seed=seed)
     device = "cuda:0"
-
-    seq_lens = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
-
+    seq_lens = paddle.full(shape=(batch_size,), fill_value=seq_len, dtype="int32")
     blocks_per_seq = (seq_lens + page_size - 1) // page_size
-    max_num_blocks_per_seq = torch.max(blocks_per_seq).item()
-
-    # Generate unique block IDs for all sequences
-    block_tables = torch.arange(
-        (batch_size * max_num_blocks_per_seq), dtype=torch.int32, device=device
+    max_num_blocks_per_seq = paddle.max(x=blocks_per_seq).item()
+    block_tables = paddle.arange(
+        dtype="int32", end=batch_size * max_num_blocks_per_seq
     ).reshape(batch_size, max_num_blocks_per_seq)
-
-    # Create separate K and V caches
     num_tokens = seq_len * batch_size
     num_blocks = (num_tokens + page_size - 1) // page_size
-    q = torch.randn(
-        batch_size,
-        num_qo_heads,
-        head_dim,
-        dtype=dtype,
-        device=device,
+    q = paddle.randn(shape=[batch_size, num_qo_heads, head_dim], dtype=dtype)
+    k_cache = paddle.randn(
+        shape=[num_blocks, num_kv_heads, page_size, head_dim], dtype=dtype
     )
-
-    k_cache = torch.randn(
-        num_blocks, num_kv_heads, page_size, head_dim, dtype=dtype, device=device
+    v_cache = paddle.randn(
+        shape=[num_blocks, num_kv_heads, page_size, head_dim], dtype=dtype
     )
-    v_cache = torch.randn(
-        num_blocks, num_kv_heads, page_size, head_dim, dtype=dtype, device=device
-    )
-
-    sink = torch.rand(num_qo_heads, device=device, dtype=torch.float32) * 5
-
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.int8, device=device)
-
+    sink = paddle.rand(shape=num_qo_heads, dtype="float32") * 5
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="int8")
     output = flashinfer.decode.trtllm_batch_decode_with_kv_cache(
         q.contiguous(),
         (k_cache, v_cache),
@@ -81,13 +63,12 @@ def test_blackwell_trtllm_gen_decode_attention_sink(
         block_tables,
         seq_lens,
         seq_len,
-        1.0,  # bmm1_scale
-        1.0,  # bmm2_scale
-        -1,  # window_left
+        1.0,
+        1.0,
+        -1,
         out_dtype=dtype,
         sinks=sink,
     )
-
     k = einops.rearrange(
         k_cache,
         "(b num_pages_per_b) h p d -> b (num_pages_per_b p) h d",
@@ -98,29 +79,17 @@ def test_blackwell_trtllm_gen_decode_attention_sink(
         "(b num_pages_per_b) h p d -> b (num_pages_per_b p) h d",
         num_pages_per_b=max_num_blocks_per_seq,
     )
-
-    o_ref = sink_attention_unified(
-        q,
-        k,
-        v,
-        sink,
-        -1,
-        False,
-        1.0,
-        mode="incremental",
-    )
-
-    if dtype == torch.float16:
-        atol, rtol = 1e-3, 1e-3
-    elif dtype == torch.bfloat16:
-        atol, rtol = 1e-2, 1e-2
+    o_ref = sink_attention_unified(q, k, v, sink, -1, False, 1.0, mode="incremental")
+    if dtype == "float16":
+        atol, rtol = 0.001, 0.001
+    elif dtype == "bfloat16":
+        atol, rtol = 0.01, 0.01
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
+    assert paddle.allclose(x=o_ref, y=output, atol=atol, rtol=rtol).item(), ""
 
-    torch.testing.assert_close(o_ref, output, atol=atol, rtol=rtol)
 
-
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
 @pytest.mark.parametrize("batch_size", [1, 4, 16])
 @pytest.mark.parametrize("page_size", [32])
 @pytest.mark.parametrize("seq_len", [32, 128, 1024])
@@ -128,56 +97,30 @@ def test_blackwell_trtllm_gen_decode_attention_sink(
 @pytest.mark.parametrize("num_kv_heads", [8, 32])
 @pytest.mark.parametrize("head_dim", [64, 128])
 def test_blackwell_trtllm_gen_context_attention_sink(
-    dtype,
-    batch_size,
-    page_size,
-    seq_len,
-    num_qo_heads,
-    num_kv_heads,
-    head_dim,
+    dtype, batch_size, page_size, seq_len, num_qo_heads, num_kv_heads, head_dim
 ):
     seed = 0
-    torch.manual_seed(seed)
+    paddle.seed(seed=seed)
     device = "cuda:0"
-
-    seq_lens = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
-
+    seq_lens = paddle.full(shape=(batch_size,), fill_value=seq_len, dtype="int32")
     blocks_per_seq = (seq_lens + page_size - 1) // page_size
-    max_num_blocks_per_seq = torch.max(blocks_per_seq).item()
-
-    # Generate unique block IDs for all sequences
-    block_tables = torch.arange(
-        (batch_size * max_num_blocks_per_seq), dtype=torch.int32, device=device
+    max_num_blocks_per_seq = paddle.max(x=blocks_per_seq).item()
+    block_tables = paddle.arange(
+        dtype="int32", end=batch_size * max_num_blocks_per_seq
     ).reshape(batch_size, max_num_blocks_per_seq)
-
-    # Create separate K and V caches
     num_tokens = seq_len * batch_size
     num_blocks = (num_tokens + page_size - 1) // page_size
-    q = torch.randn(
-        num_tokens,
-        num_qo_heads,
-        head_dim,
-        dtype=dtype,
-        device=device,
+    q = paddle.randn(shape=[num_tokens, num_qo_heads, head_dim], dtype=dtype)
+    k_cache = paddle.randn(
+        shape=[num_blocks, num_kv_heads, page_size, head_dim], dtype=dtype
     )
-
-    k_cache = torch.randn(
-        num_blocks, num_kv_heads, page_size, head_dim, dtype=dtype, device=device
+    v_cache = paddle.randn(
+        shape=[num_blocks, num_kv_heads, page_size, head_dim], dtype=dtype
     )
-    v_cache = torch.randn(
-        num_blocks, num_kv_heads, page_size, head_dim, dtype=dtype, device=device
-    )
-
-    sink = torch.rand(num_qo_heads, device=device, dtype=torch.float32) * 5
-
-    workspace_buffer = torch.empty(128 * 1024 * 1024, dtype=torch.int8, device=device)
-    q_indptr = (
-        torch.arange(0, batch_size + 1, dtype=torch.int32, device=device) * seq_len
-    )
-    kv_indptr = (
-        torch.arange(0, num_blocks + 1, dtype=torch.int32, device=device) * page_size
-    )
-
+    sink = paddle.rand(shape=num_qo_heads, dtype="float32") * 5
+    workspace_buffer = paddle.empty(shape=128 * 1024 * 1024, dtype="int8")
+    q_indptr = paddle.arange(start=0, end=batch_size + 1, dtype="int32") * seq_len
+    kv_indptr = paddle.arange(start=0, end=num_blocks + 1, dtype="int32") * page_size
     output = flashinfer.prefill.trtllm_batch_context_with_kv_cache(
         q.contiguous(),
         (k_cache, v_cache),
@@ -186,44 +129,25 @@ def test_blackwell_trtllm_gen_context_attention_sink(
         seq_lens,
         seq_len,
         seq_len,
-        1.0,  # bmm1_scale
-        1.0,  # bmm2_scale
+        1.0,
+        1.0,
         batch_size,
         q_indptr,
         kv_indptr,
-        -1,  # window_left
+        -1,
         out_dtype=dtype,
         sinks=sink,
     )
-
-    k = einops.rearrange(
-        k_cache,
-        "num_pages h p d -> (num_pages p) h d",
-    )
-    v = einops.rearrange(
-        v_cache,
-        "num_pages h p d -> (num_pages p) h d",
-    )
-
-    print(q.shape, k.shape, v.shape)
-
+    k = einops.rearrange(k_cache, "num_pages h p d -> (num_pages p) h d")
+    v = einops.rearrange(v_cache, "num_pages h p d -> (num_pages p) h d")
+    print(tuple(q.shape), tuple(k.shape), tuple(v.shape))
     o_ref = sink_attention_unified(
-        q,
-        k,
-        v,
-        sink,
-        -1,
-        True,
-        1.0,
-        mode="prefill",
-        batch_size=batch_size,
+        q, k, v, sink, -1, True, 1.0, mode="prefill", batch_size=batch_size
     )
-
-    if dtype == torch.float16:
-        atol, rtol = 1e-3, 1e-3
-    elif dtype == torch.bfloat16:
-        atol, rtol = 1e-2, 1e-2
+    if dtype == "float16":
+        atol, rtol = 0.001, 0.001
+    elif dtype == "bfloat16":
+        atol, rtol = 0.01, 0.01
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
-
-    torch.testing.assert_close(o_ref, output, atol=atol, rtol=rtol)
+    assert paddle.allclose(x=o_ref, y=output, atol=atol, rtol=rtol).item(), ""

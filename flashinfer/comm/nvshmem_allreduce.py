@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,11 +15,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from typing import Optional
-
-import torch
-from torch.distributed import ProcessGroup
 
 from .nvshmem import get_nvshmem_module
 
@@ -48,9 +46,9 @@ class NVSHMEMAllReduce:
         local_rank: int,
         world_size: int,
         max_buffer_elements: int,
-        dtype: torch.dtype,
-        device: torch.device,
-        group: Optional[ProcessGroup] = None,
+        dtype: paddle.dtype,
+        device: str,
+>>>>>>        group: Optional[torch.distributed.ProcessGroup] = None,
         should_init: bool = True,
     ):
         self.local_rank = local_rank
@@ -60,12 +58,9 @@ class NVSHMEMAllReduce:
         self.max_buffer_elements = max_buffer_elements
         self.group = group
         self.nvshmem_module = get_nvshmem_module()
-
         self.should_init = should_init
         if self.should_init:
             self.init_nvshmem()
-
-        # assert PE and world size match
         my_pe = self.nvshmem_module.nvshmem_my_pe()
         n_pes = self.nvshmem_module.nvshmem_n_pes()
         if my_pe != local_rank:
@@ -78,56 +73,40 @@ class NVSHMEMAllReduce:
                 f"WARNING: Rank {local_rank}: World size mismatch! Expected {world_size}, got {n_pes}",
                 flush=True,
             )
-
-        # allocate memory in nvshmem symm heap
         self.symm_buffer_input = self.nvshmem_module.nvshmem_malloc(
-            [max_buffer_elements],
-            self.dtype,
-            self.device,
+            [max_buffer_elements], self.dtype, self.device
         )
         self.symm_buffer_output = self.nvshmem_module.nvshmem_malloc(
-            [max_buffer_elements],
-            self.dtype,
-            self.device,
+            [max_buffer_elements], self.dtype, self.device
         )
-        torch.distributed.barrier(self.group)
+        paddle.distributed.barrier(group=self.group)
 
     def init_nvshmem(self):
-        torch.zeros(
-            self.nvshmem_module.nvshmem_unique_id_size(),
-            dtype=torch.uint8,
-            device="cpu",
-        )
+        paddle.zeros(shape=self.nvshmem_module.nvshmem_unique_id_size(), dtype="uint8")
         if self.local_rank == 0:
             uid = self.nvshmem_module.nvshmem_get_unique_id()
         else:
-            uid = torch.zeros(
-                self.nvshmem_module.nvshmem_unique_id_size(),
-                dtype=torch.uint8,
-                device="cpu",
+            uid = paddle.zeros(
+                shape=self.nvshmem_module.nvshmem_unique_id_size(), dtype="uint8"
             )
-        torch.distributed.broadcast(uid, src=0)
-        torch.distributed.barrier(self.group)
+        paddle.distributed.broadcast(tensor=uid, src=0)
+        paddle.distributed.barrier(group=self.group)
         init_status = self.nvshmem_module.nvshmem_init(
             uid, self.local_rank, self.world_size
         )
-        torch.cuda.synchronize()
+        paddle.device.synchronize()
         if init_status != 0:
             raise RuntimeError("Failed to initialize nvshmem")
 
-    def all_reduce(self, inp: torch.Tensor, out: torch.Tensor) -> None:
+    def all_reduce(self, inp: paddle.Tensor, out: paddle.Tensor) -> None:
         self.nvshmem_module.nvshmem_allreduce_on_stream_with_copy(
-            self.symm_buffer_output,
-            self.symm_buffer_input,
-            out,
-            inp,
-            inp.numel(),
+            self.symm_buffer_output, self.symm_buffer_input, out, inp, inp.size
         )
 
     def shutdown(self):
         del self.symm_buffer_input
         del self.symm_buffer_output
-        torch.distributed.barrier(self.group)
-        torch.cuda.synchronize()
+        paddle.distributed.barrier(group=self.group)
+        paddle.device.synchronize()
         if self.should_init:
             self.nvshmem_module.nvshmem_finalize()

@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import triton
 import triton.language as tl
 
@@ -27,11 +26,9 @@ def get_batch_indices_positions_kernel(
     num_stages: tl.constexpr,
 ):
     batch_idx = tl.program_id(0)
-
     batch_start = tl.load(append_indptr + batch_idx)
     batch_end = tl.load(append_indptr + batch_idx + 1)
     seq_len = tl.load(seq_lens_ptr + batch_idx)
-
     for i in tl.range(batch_start, batch_end, 128, num_stages=num_stages):
         offsets = tl.arange(0, 128) + i
         mask = offsets < batch_end

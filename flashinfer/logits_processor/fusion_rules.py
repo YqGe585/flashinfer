@@ -13,23 +13,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 from typing import Callable, List, NamedTuple, Tuple
 
 from .op import Op
-from .operators import (
-    FusedProbsMinPSampleOp,
-    FusedProbsTopKSampleOp,
-    FusedProbsTopKTopPSampleOp,
-    FusedProbsTopPSampleOp,
-    FusedTemperatureSoftmaxOp,
-    MinPOp,
-    ProbsSampleOp,
-    ProbsTopKOp,
-    SoftmaxOp,
-    TemperatureOp,
-    TopPOp,
-)
+from .operators import (FusedProbsMinPSampleOp, FusedProbsTopKSampleOp,
+                        FusedProbsTopKTopPSampleOp, FusedProbsTopPSampleOp,
+                        FusedTemperatureSoftmaxOp, MinPOp, ProbsSampleOp,
+                        ProbsTopKOp, SoftmaxOp, TemperatureOp, TopPOp)
 
 
 class FusionRule(NamedTuple):

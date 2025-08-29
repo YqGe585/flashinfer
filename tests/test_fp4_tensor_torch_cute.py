@@ -1,8 +1,12 @@
-import pytest
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
 import cutlass
 import cutlass.cute as cute
-import torch
+import paddle
+import pytest
 from cutlass.cute.runtime import make_ptr
+from paddle_utils import *
 
 from flashinfer.cute_dsl.utils import is_cute_dsl_available
 
@@ -25,16 +29,12 @@ def copy_torch_fp4_tensor(a_ptr: cute.Pointer, b_ptr: cute.Pointer):
 def test_fp4_tensor_torch_cute():
     if not is_cute_dsl_available():
         pytest.skip("cute-dsl is not available")
-
-    a = torch.randint(
-        0, 128, size=(3, 4), dtype=torch.uint8, device=torch.device("cuda:0")
-    )
-    b = torch.zeros_like(a)
-    a_view = a.view(torch.float4_e2m1fn_x2)
-    b_view = b.view(torch.float4_e2m1fn_x2)
+    a = paddle.randint(low=0, high=128, shape=(3, 4), dtype="uint8")
+    b = paddle.zeros_like(x=a)
+>>>>>>    a_view = a.view(torch.float4_e2m1fn_x2)
+>>>>>>    b_view = b.view(torch.float4_e2m1fn_x2)
     print(f"a_view: \n{a_view}")
     print("")
-
     a_ptr = make_ptr(
         cutlass.Float4E2M1FN,
         a_view.data_ptr(),
@@ -48,6 +48,6 @@ def test_fp4_tensor_torch_cute():
         assumed_align=16,
     )
     copy_torch_fp4_tensor(a_ptr, b_ptr)
-    torch.testing.assert_close(a, b)
+    assert paddle.allclose(x=a, y=b).item(), ""
     print("Results verified successfully!")
     print(f"Result: \n{b_view}")

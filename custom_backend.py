@@ -7,7 +7,6 @@ _root = Path(__file__).parent.resolve()
 _data_dir = _root / "flashinfer" / "data"
 _aot_ops_dir = _root / "aot-ops"
 _aot_ops_package_dir = _root / "build" / "aot-ops-package-dir"
-
 _requires_for_aot = ["torch", "ninja", "numpy", "requests"]
 
 
@@ -39,11 +38,8 @@ def _create_data_dir():
 
 
 def _prepare_for_wheel():
-    # Remove data directory
     if _data_dir.exists():
         shutil.rmtree(_data_dir)
-
-    # Link AOT ops directory to "aot-ops"
     _rm_aot_ops_package_dir()
     if not _aot_ops_dir.exists():
         _aot_ops_dir.mkdir()
@@ -55,7 +51,6 @@ def _prepare_for_wheel():
 
 def _prepare_for_editable():
     _create_data_dir()
-
     _rm_aot_ops_package_dir()
     _aot_ops_dir.mkdir(parents=True, exist_ok=True)
     _aot_ops_package_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -63,11 +58,8 @@ def _prepare_for_editable():
 
 
 def _prepare_for_sdist():
-    # Remove data directory
     if _data_dir.exists():
         shutil.rmtree(_data_dir)
-
-    # Create an empty directory for AOT ops
     _rm_aot_ops_package_dir()
     _aot_ops_package_dir.parent.mkdir(parents=True, exist_ok=True)
     _aot_ops_package_dir.mkdir(parents=True)

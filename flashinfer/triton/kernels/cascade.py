@@ -1,5 +1,5 @@
-import triton  # type: ignore[import]
-import triton.language as tl  # type: ignore[import]
+import triton
+import triton.language as tl
 
 
 @triton.jit
@@ -39,23 +39,17 @@ def merge_state_kernel(
         for head_idx in tl.range(bdy):
             s_a_val = tl.load(s_a_ptr + pos * num_heads + head_idx)
             s_b_val = tl.load(s_b_ptr + pos * num_heads + head_idx)
-
             offsets = (pos * num_heads + head_idx) * head_dim + tx
             v_a = tl.load(v_a_ptr + offsets)
             v_b = tl.load(v_b_ptr + offsets)
-
             v_merged, s_max, d = state_merge(
                 o=v_a, m=s_a_val, d=1, other_o=v_b, other_m=s_b_val, other_d=1
             )
             v_merged, s_max, d = state_normalize(v_merged, s_max, d)
             v_merged_offset = (pos * num_heads + head_idx) * head_dim + tx
             tl.store(v_merged_ptr + v_merged_offset, v_merged)
-
             if s_merged_ptr:
-                tl.store(
-                    s_merged_ptr + pos * num_heads + head_idx,
-                    tl.log2(d) + s_max,
-                )
+                tl.store(s_merged_ptr + pos * num_heads + head_idx, tl.log2(d) + s_max)
 
 
 @triton.jit
@@ -74,7 +68,6 @@ def merge_state_in_place_kernel(
     if mask_ptr:
         if tl.load(mask_ptr + pos) == 0:
             return
-
     for head_idx in tl.range(bdy):
         s_val = tl.load(s_ptr + pos * num_heads + head_idx)
         s_other_val = tl.load(s_other_ptr + pos * num_heads + head_idx)
@@ -91,8 +84,7 @@ def merge_state_in_place_kernel(
             tl.store(v_ptr + offset, v_vec)
         if s_ptr:
             tl.store(
-                s_ptr + pos * num_heads + head_idx,
-                tl.log2(s_val + s_other_val) + s_max,
+                s_ptr + pos * num_heads + head_idx, tl.log2(s_val + s_other_val) + s_max
             )
 
 
@@ -109,10 +101,9 @@ def merge_states_kernel(
     bdy: tl.constexpr,
 ):
     pos = tl.program_id(axis=0)
-
     for tx in tl.range(bdx):
         for head_idx in tl.range(bdy):
-            o, m, d = 0.0, -5e4, 1.0
+            o, m, d = 0.0, -50000.0, 1.0
             for iter in tl.range(num_index_sets):
                 s = tl.load(
                     s_ptr + (pos * num_index_sets + iter) * num_heads + head_idx
@@ -146,7 +137,7 @@ def variable_length_merge_states_kernel(
     pos = tl.program_id(axis=0)
     for tx in tl.range(bdx):
         for head_idx in tl.range(bdy):
-            o, m, d = 0.0, -5e4, 1.0
+            o, m, d = 0.0, -50000.0, 1.0
             for iter in tl.range(tl.load(indptr + pos), tl.load(indptr + pos + 1)):
                 s = tl.load(s_ptr + iter * num_heads + head_idx)
                 v = tl.load(v_ptr + (iter * num_heads + head_idx) * head_dim + tx)

@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import triton
 import triton.language as tl
 
@@ -37,24 +36,18 @@ def compute_sm80_group_gemm_args(
     w_column_major,
 ):
     pid = tl.program_id(0)
-
     m = tl.load(xy_indptr + pid + 1) - tl.load(xy_indptr + pid)
     k, n = d_in, d_out
-
     tl.store(all_problems_ptr + pid * 3, m)
     tl.store(all_problems_ptr + pid * 3 + 1, n)
     tl.store(all_problems_ptr + pid * 3 + 2, k)
-
     w_i = tl.load(w_indices + pid) if w_indices else tl.cast(pid, tl.int64)
     w_curr_ptr = w + w_i * k * n
     tl.store(w_ptr + pid, w_curr_ptr)
-
     x_curr_ptr = x + tl.load(xy_indptr + pid) * k
     tl.store(x_ptr + pid, x_curr_ptr)
-
     y_curr_ptr = y + tl.load(xy_indptr + pid) * n
     tl.store(y_ptr + pid, y_curr_ptr)
-
     tl.store(x_ld_ptr + pid, k)
     tl.store(w_ld_ptr + pid, k if w_column_major else n)
     tl.store(y_ld_ptr + pid, n)
@@ -79,36 +72,25 @@ def compute_sm90_group_gemm_args(
     w_column_major,
 ):
     pid = tl.program_id(0)
-
     m = tl.load(xy_indptr + pid + 1) - tl.load(xy_indptr + pid)
     k, n = d_in, d_out
-
     tl.store(all_problems_ptr + pid * 3, m)
     tl.store(all_problems_ptr + pid * 3 + 1, n)
     tl.store(all_problems_ptr + pid * 3 + 2, k)
-
     w_i = tl.load(w_indices + pid) if w_indices else tl.cast(pid, tl.int64)
     w_curr_ptr = w + w_i * k * n
     tl.store(w_ptr + pid, w_curr_ptr)
-
     x_curr_ptr = x + tl.load(xy_indptr + pid) * k
     tl.store(x_ptr + pid, x_curr_ptr)
-
     y_curr_ptr = y + tl.load(xy_indptr + pid) * n
     tl.store(y_ptr + pid, y_curr_ptr)
-
     tl.store(x_stride_ptr + pid, k)
     tl.store(w_stride_ptr + pid, k if w_column_major else n)
     tl.store(y_stride_ptr + pid, n)
 
 
 @triton.jit
-def compute_padding_mapping(
-    m_indptr,
-    padded_m_indptr,
-    m_rank,
-    padded_m_rank,
-):
+def compute_padding_mapping(m_indptr, padded_m_indptr, m_rank, padded_m_rank):
     pid = tl.program_id(0)
     m_start = tl.load(m_indptr + pid)
     m_end = tl.load(m_indptr + pid + 1)

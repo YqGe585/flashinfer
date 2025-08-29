@@ -1,8 +1,12 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
 import math
 
+import paddle
 import pytest
-import torch
 from conftest import VARLEN_INDPTR_PARAMS
+from paddle_utils import *
 
 import flashinfer
 from flashinfer.utils import is_sm100a_supported
@@ -10,64 +14,72 @@ from flashinfer.utils import is_sm100a_supported
 
 def attention_ref(
     batch_size,
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
     causal: bool,
     sm_scale: float,
-) -> torch.Tensor:
-    qo_len = q.shape[0] // batch_size
-    kv_len = k.shape[0] // batch_size
-    num_qo_heads = q.shape[1]
-    head_dim_qk = q.shape[2]
-    head_dim_vo = v.shape[2]
+) -> paddle.Tensor:
+    qo_len = tuple(q.shape)[0] // batch_size
+    kv_len = tuple(k.shape)[0] // batch_size
+    num_qo_heads = tuple(q.shape)[1]
+    head_dim_qk = tuple(q.shape)[2]
+    head_dim_vo = tuple(v.shape)[2]
     logits = (
-        torch.einsum(
+        paddle.einsum(
             "bmhd,bnhd->bhmn",
-            q.view(batch_size, qo_len, num_qo_heads, head_dim_qk).float(),
-            k.view(batch_size, kv_len, num_qo_heads, head_dim_qk).float(),
+            q.view(batch_size, qo_len, num_qo_heads, head_dim_qk).astype(
+                dtype="float32"
+            ),
+            k.view(batch_size, kv_len, num_qo_heads, head_dim_qk).astype(
+                dtype="float32"
+            ),
         )
         * sm_scale
     )
-
     if causal:
-        mask = torch.arange(kv_len - qo_len, kv_len, device=q.device).unsqueeze(
-            1
-        ) >= torch.arange(0, kv_len, device=q.device).unsqueeze(0)
+        mask = paddle.arange(start=kv_len - qo_len, end=kv_len).unsqueeze(
+            axis=1
+        ) >= paddle.arange(start=0, end=kv_len).unsqueeze(axis=0)
     else:
-        mask = torch.ones(qo_len, kv_len, device=q.device)
-
-    logits = logits.masked_fill(mask.unsqueeze(0).unsqueeze(0) == 0, float("-inf"))
-    lse_ref = torch.logsumexp(logits, -1).transpose(-1, -2)
-    p = torch.softmax(logits, dim=-1)
+        mask = paddle.ones(shape=[qo_len, kv_len])
+    logits = logits.masked_fill(
+        mask=mask.unsqueeze(axis=0).unsqueeze(axis=0) == 0, value=float("-inf")
+    )
+    lse_ref = paddle.logsumexp(x=logits, axis=-1).transpose(
+        perm=dim2perm(paddle.logsumexp(x=logits, axis=-1).ndim, -1, -2)
+    )
+    p = paddle.nn.functional.softmax(x=logits, axis=-1)
     o_ref = (
-        torch.einsum(
+        paddle.einsum(
             "bhmn,bnhd->bmhd",
             p,
-            v.view(batch_size, kv_len, num_qo_heads, head_dim_vo).float(),
+            v.view(batch_size, kv_len, num_qo_heads, head_dim_vo).astype(
+                dtype="float32"
+            ),
         )
         .contiguous()
         .view(batch_size * qo_len, num_qo_heads, head_dim_vo)
         .to(q)
     )
-
     return o_ref, lse_ref * math.log2(math.e)
 
 
 def attention_varlen_ref(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    qo_indptr: torch.Tensor,
-    kv_indptr: torch.Tensor,
+    q: paddle.Tensor,
+    k: paddle.Tensor,
+    v: paddle.Tensor,
+    qo_indptr: paddle.Tensor,
+    kv_indptr: paddle.Tensor,
     causal: bool,
     sm_scale: float,
-) -> torch.Tensor:
-    batch_size = qo_indptr.shape[0] - 1
+) -> paddle.Tensor:
+    batch_size = tuple(qo_indptr.shape)[0] - 1
     nnz_qo = qo_indptr[-1].item()
-    o = torch.empty(nnz_qo, *q.shape[1:-1], v.shape[-1], device=q.device, dtype=q.dtype)
-    lse = torch.empty(nnz_qo, q.shape[1], device=q.device, dtype=torch.float32)
-
+    o = paddle.empty(
+        shape=[nnz_qo, *tuple(q.shape)[1:-1], tuple(v.shape)[-1]], dtype=q.dtype
+    )
+    lse = paddle.empty(shape=[nnz_qo, tuple(q.shape)[1]], dtype="float32")
     for i in range(batch_size):
         o_i, lse_i = attention_ref(
             1,
@@ -77,11 +89,9 @@ def attention_varlen_ref(
             causal,
             sm_scale,
         )
-
-        lse_i = lse_i.flatten(0, 1)
+        lse_i = lse_i.flatten(start_axis=0, stop_axis=1)
         o[qo_indptr[i] : qo_indptr[i + 1]] = o_i
         lse[qo_indptr[i] : qo_indptr[i + 1]] = lse_i
-
     return o, lse
 
 
@@ -94,7 +104,7 @@ def attention_varlen_ref(
 @pytest.mark.parametrize("head_dim_vo", [128])
 @pytest.mark.parametrize("sm_scale", [1.0, 1.0 / math.sqrt(192), 1.0 / math.sqrt(128)])
 @pytest.mark.parametrize("causal", [False, True])
-@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("dtype", ["bfloat16"])
 def test_blackwell_cutlass_fmha(
     batch_size,
     qo_len,
@@ -109,28 +119,22 @@ def test_blackwell_cutlass_fmha(
 ):
     if qo_len > kv_len and causal:
         pytest.skip("qo_len > kv_len and causal is not supported")
-
-    if not is_sm100a_supported(torch.device("cuda")):
+    if not is_sm100a_supported(device2str("cuda")):
         pytest.skip("SM100A is not supported on this device")
-    torch.manual_seed(42)
-    q = torch.randn(
-        batch_size * qo_len, num_qo_heads, head_dim_qk, dtype=dtype, device="cuda"
+    paddle.seed(seed=42)
+    q = paddle.randn(
+        shape=[batch_size * qo_len, num_qo_heads, head_dim_qk], dtype=dtype
     )
-    qo_indptr = (
-        torch.arange(0, batch_size + 1, device="cuda", dtype=torch.int32) * qo_len
+    qo_indptr = paddle.arange(start=0, end=batch_size + 1, dtype="int32") * qo_len
+    k = paddle.randn(
+        shape=[batch_size * kv_len, num_kv_heads, head_dim_qk], dtype=dtype
     )
-    k = torch.randn(
-        batch_size * kv_len, num_kv_heads, head_dim_qk, dtype=dtype, device="cuda"
+    v = paddle.randn(
+        shape=[batch_size * kv_len, num_kv_heads, head_dim_vo], dtype=dtype
     )
-    v = torch.randn(
-        batch_size * kv_len, num_kv_heads, head_dim_vo, dtype=dtype, device="cuda"
-    )
-    kv_indptr = (
-        torch.arange(0, batch_size + 1, device="cuda", dtype=torch.int32) * kv_len
-    )
-
+    kv_indptr = paddle.arange(start=0, end=batch_size + 1, dtype="int32") * kv_len
     wrapper = flashinfer.prefill.BatchPrefillWithRaggedKVCacheWrapper(
-        torch.empty(128 * 1024 * 1024, device="cuda", dtype=torch.uint8),
+        paddle.empty(shape=128 * 1024 * 1024, dtype="uint8"),
         kv_layout="NHD",
         backend="cutlass",
     )
@@ -147,21 +151,18 @@ def test_blackwell_cutlass_fmha(
         kv_data_type=dtype,
     )
     o, lse = wrapper.run(q, k, v, return_lse=True)
-
     gqa_group_ratio = num_qo_heads // num_kv_heads
-    k_repeated = torch.repeat_interleave(k, gqa_group_ratio, dim=1)
-    v_repeated = torch.repeat_interleave(v, gqa_group_ratio, dim=1)
+    k_repeated = paddle.repeat_interleave(x=k, repeats=gqa_group_ratio, axis=1)
+    v_repeated = paddle.repeat_interleave(x=v, repeats=gqa_group_ratio, axis=1)
     o_ref, lse_ref = attention_ref(
         batch_size, q, k_repeated, v_repeated, causal, sm_scale
     )
-
-    lse_ref = lse_ref.flatten(0, 1)
-    if dtype == torch.half:
-        torch.testing.assert_close(o, o_ref, rtol=1e-3, atol=1e-3)
+    lse_ref = lse_ref.flatten(start_axis=0, stop_axis=1)
+    if dtype == "float16":
+        assert paddle.allclose(x=o, y=o_ref, rtol=0.001, atol=0.001).item(), ""
     else:
-        torch.testing.assert_close(o, o_ref, rtol=1e-2, atol=1e-2)
-
-    torch.testing.assert_close(lse, lse_ref, rtol=1e-3, atol=1e-3)
+        assert paddle.allclose(x=o, y=o_ref, rtol=0.01, atol=0.01).item(), ""
+    assert paddle.allclose(x=lse, y=lse_ref, rtol=0.001, atol=0.001).item(), ""
 
 
 @pytest.mark.parametrize("indptr", VARLEN_INDPTR_PARAMS)
@@ -171,7 +172,7 @@ def test_blackwell_cutlass_fmha(
 @pytest.mark.parametrize("head_dim_vo", [128])
 @pytest.mark.parametrize("sm_scale", [1.0 / math.sqrt(128)])
 @pytest.mark.parametrize("causal", [False, True])
-@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("dtype", ["bfloat16"])
 def test_blackwell_cutlass_varlen(
     indptr,
     num_qo_heads,
@@ -182,18 +183,17 @@ def test_blackwell_cutlass_varlen(
     causal,
     dtype,
 ):
-    if not is_sm100a_supported(torch.device("cuda")):
+    if not is_sm100a_supported(device2str("cuda")):
         pytest.skip("SM100A is not supported on this device")
-    torch.manual_seed(42)
-    qkv = torch.randn(
-        indptr[-1],
-        (
+    paddle.seed(seed=42)
+    qkv = paddle.randn(
+        shape=[
+            indptr[-1],
             num_qo_heads * head_dim_qk
             + num_kv_heads * head_dim_qk
-            + num_kv_heads * head_dim_vo
-        ),
+            + num_kv_heads * head_dim_vo,
+        ],
         dtype=dtype,
-        device="cuda",
     )
     q = qkv[:, : num_qo_heads * head_dim_qk].view(indptr[-1], num_qo_heads, head_dim_qk)
     k = qkv[
@@ -204,15 +204,13 @@ def test_blackwell_cutlass_varlen(
     v = qkv[:, num_qo_heads * head_dim_qk + num_kv_heads * head_dim_qk :].view(
         indptr[-1], num_kv_heads, head_dim_vo
     )
-    qo_indptr = torch.tensor(indptr, device="cuda", dtype=torch.int32)
+    qo_indptr = paddle.to_tensor(data=indptr, dtype="int32", place="gpu")
     kv_indptr = qo_indptr
-
     wrapper = flashinfer.prefill.BatchPrefillWithRaggedKVCacheWrapper(
-        torch.empty(128 * 1024 * 1024, device="cuda", dtype=torch.uint8),
+        paddle.empty(shape=128 * 1024 * 1024, dtype="uint8"),
         kv_layout="NHD",
         backend="cutlass",
     )
-
     wrapper.plan(
         qo_indptr,
         kv_indptr,
@@ -226,21 +224,17 @@ def test_blackwell_cutlass_varlen(
         kv_data_type=dtype,
     )
     o, lse = wrapper.run(q, k, v, return_lse=True)
-
     gqa_group_ratio = num_qo_heads // num_kv_heads
-    k_repeated = torch.repeat_interleave(k, gqa_group_ratio, dim=1)
-    v_repeated = torch.repeat_interleave(v, gqa_group_ratio, dim=1)
-
+    k_repeated = paddle.repeat_interleave(x=k, repeats=gqa_group_ratio, axis=1)
+    v_repeated = paddle.repeat_interleave(x=v, repeats=gqa_group_ratio, axis=1)
     o_ref, lse_ref = attention_varlen_ref(
         q, k_repeated, v_repeated, qo_indptr, kv_indptr, causal, sm_scale
     )
-
-    if dtype == torch.half:
-        torch.testing.assert_close(o, o_ref, rtol=1e-3, atol=1e-3)
+    if dtype == "float16":
+        assert paddle.allclose(x=o, y=o_ref, rtol=0.001, atol=0.001).item(), ""
     else:
-        torch.testing.assert_close(o, o_ref, rtol=1e-2, atol=1e-2)
-
-    torch.testing.assert_close(lse, lse_ref, rtol=1e-3, atol=1e-3)
+        assert paddle.allclose(x=o, y=o_ref, rtol=0.01, atol=0.01).item(), ""
+    assert paddle.allclose(x=lse, y=lse_ref, rtol=0.001, atol=0.001).item(), ""
 
 
 @pytest.mark.parametrize("qo_indptr_list", [[0, 10, 20, 30, 40, 50, 60, 100]])
@@ -250,7 +244,7 @@ def test_blackwell_cutlass_varlen(
 @pytest.mark.parametrize("head_dim_qk", [192, 128])
 @pytest.mark.parametrize("head_dim_vo", [128])
 @pytest.mark.parametrize("sm_scale", [1.0 / math.sqrt(128)])
-@pytest.mark.parametrize("dtype", [torch.half, torch.bfloat16])
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
 def test_blackwell_cutlass_qo_kv_varlen(
     qo_indptr_list,
     kv_indptr_list,
@@ -262,40 +256,19 @@ def test_blackwell_cutlass_qo_kv_varlen(
     dtype,
 ):
     causal = False
-    if not is_sm100a_supported(torch.device("cuda")):
+    if not is_sm100a_supported(device2str("cuda")):
         pytest.skip("SM100A is not supported on this device")
-    torch.manual_seed(42)
-    q = torch.randn(
-        qo_indptr_list[-1],
-        num_qo_heads,
-        head_dim_qk,
-        dtype=dtype,
-        device="cuda",
-    )
-    k = torch.randn(
-        kv_indptr_list[-1],
-        num_kv_heads,
-        head_dim_qk,
-        dtype=dtype,
-        device="cuda",
-    )
-    v = torch.randn(
-        kv_indptr_list[-1],
-        num_kv_heads,
-        head_dim_vo,
-        dtype=dtype,
-        device="cuda",
-    )
-
-    qo_indptr = torch.tensor(qo_indptr_list, device="cuda", dtype=torch.int32)
-    kv_indptr = torch.tensor(kv_indptr_list, device="cuda", dtype=torch.int32)
-
+    paddle.seed(seed=42)
+    q = paddle.randn(shape=[qo_indptr_list[-1], num_qo_heads, head_dim_qk], dtype=dtype)
+    k = paddle.randn(shape=[kv_indptr_list[-1], num_kv_heads, head_dim_qk], dtype=dtype)
+    v = paddle.randn(shape=[kv_indptr_list[-1], num_kv_heads, head_dim_vo], dtype=dtype)
+    qo_indptr = paddle.to_tensor(data=qo_indptr_list, dtype="int32", place="gpu")
+    kv_indptr = paddle.to_tensor(data=kv_indptr_list, dtype="int32", place="gpu")
     wrapper = flashinfer.prefill.BatchPrefillWithRaggedKVCacheWrapper(
-        torch.empty(128 * 1024 * 1024, device="cuda", dtype=torch.uint8),
+        paddle.empty(shape=128 * 1024 * 1024, dtype="uint8"),
         kv_layout="NHD",
         backend="cutlass",
     )
-
     wrapper.plan(
         qo_indptr,
         kv_indptr,
@@ -309,37 +282,25 @@ def test_blackwell_cutlass_qo_kv_varlen(
         kv_data_type=dtype,
     )
     o, lse = wrapper.run(q, k, v, return_lse=True)
-
     gqa_group_ratio = num_qo_heads // num_kv_heads
-    k_repeated = torch.repeat_interleave(k, gqa_group_ratio, dim=1)
-    v_repeated = torch.repeat_interleave(v, gqa_group_ratio, dim=1)
-
+    k_repeated = paddle.repeat_interleave(x=k, repeats=gqa_group_ratio, axis=1)
+    v_repeated = paddle.repeat_interleave(x=v, repeats=gqa_group_ratio, axis=1)
     o_ref, lse_ref = attention_varlen_ref(
         q, k_repeated, v_repeated, qo_indptr, kv_indptr, causal, sm_scale
     )
-
-    if dtype == torch.half:
-        torch.testing.assert_close(o[10:60], o_ref[10:60], rtol=1e-3, atol=1e-3)
+    if dtype == "float16":
+        assert paddle.allclose(
+            x=o[10:60], y=o_ref[10:60], rtol=0.001, atol=0.001
+        ).item(), ""
     else:
-        torch.testing.assert_close(o[10:60], o_ref[10:60], rtol=1e-2, atol=1e-2)
-
-    torch.testing.assert_close(lse, lse_ref, rtol=1e-3, atol=1e-3)
+        assert paddle.allclose(
+            x=o[10:60], y=o_ref[10:60], rtol=0.01, atol=0.01
+        ).item(), ""
+    assert paddle.allclose(x=lse, y=lse_ref, rtol=0.001, atol=0.001).item(), ""
 
 
 if __name__ == "__main__":
-    test_blackwell_cutlass_fmha(
-        9,
-        377,
-        977,
-        1,
-        1,
-        192,
-        128,
-        1,
-        False,
-        torch.bfloat16,
-    )
-
+    test_blackwell_cutlass_fmha(9, 377, 977, 1, 1, 192, 128, 1, False, "bfloat16")
     test_blackwell_cutlass_varlen(
         [0, 1274, 2568, 3915, 5194, 6498, 7839, 8192],
         32,
@@ -348,9 +309,8 @@ if __name__ == "__main__":
         128,
         1,
         True,
-        torch.bfloat16,
+        "bfloat16",
     )
-
     test_blackwell_cutlass_qo_kv_varlen(
         [0, 10, 20, 30, 40, 50, 60, 100],
         [0, 50, 50, 50, 50, 50, 50, 50],
@@ -359,5 +319,5 @@ if __name__ == "__main__":
         128,
         128,
         1,
-        torch.bfloat16,
+        "bfloat16",
     )

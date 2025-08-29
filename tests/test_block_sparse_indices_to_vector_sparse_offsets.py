@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2023 by FlashInfer team.
 
@@ -13,9 +15,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import pytest
-import torch
 
 import flashinfer.page
 
@@ -31,25 +31,20 @@ def test_block_sparse_indices_to_vector_sparse_offsets(
     if batch_size * kv_len > 1048576:
         pytest.skip("skip large test")
     num_blocks_per_row = (kv_len + block_size - 1) // block_size
-
-    block_sparse_indices = torch.arange(
-        batch_size * num_blocks_per_row, device="cuda", dtype=torch.int32
+    block_sparse_indices = paddle.arange(
+        dtype="int32", end=batch_size * num_blocks_per_row
     )
-    block_sparse_indptr = torch.arange(
-        0,
-        batch_size * num_blocks_per_row + 1,
-        num_blocks_per_row,
-        device="cuda",
-        dtype=torch.int32,
+    block_sparse_indptr = paddle.arange(
+        start=0,
+        end=batch_size * num_blocks_per_row + 1,
+        step=num_blocks_per_row,
+        dtype="int32",
     )
-    vector_sparse_offsets_buf = torch.zeros(
-        batch_size * kv_len, device="cuda", dtype=torch.int32
+    vector_sparse_offsets_buf = paddle.zeros(shape=batch_size * kv_len, dtype="int32")
+    vector_sparse_indptr = paddle.arange(
+        start=0, end=batch_size * kv_len + 1, step=kv_len, dtype="int32"
     )
-    vector_sparse_indptr = torch.arange(
-        0, batch_size * kv_len + 1, kv_len, device="cuda", dtype=torch.int32
-    )
-    kv_lens = torch.full((batch_size,), kv_len, device="cuda", dtype=torch.int32)
-
+    kv_lens = paddle.full(shape=(batch_size,), fill_value=kv_len, dtype="int32")
     vector_sparse_offsets = (
         flashinfer.page.block_sparse_indices_to_vector_sparse_offsets(
             block_sparse_indices,
@@ -62,8 +57,6 @@ def test_block_sparse_indices_to_vector_sparse_offsets(
             block_size,
         )
     )
-
-    # Check that the output is correct
     for i in range(batch_size):
         indices_i = block_sparse_indices[
             i * num_blocks_per_row : (i + 1) * num_blocks_per_row
@@ -71,13 +64,12 @@ def test_block_sparse_indices_to_vector_sparse_offsets(
         output_i = vector_sparse_offsets[
             vector_sparse_indptr[i] : vector_sparse_indptr[i + 1]
         ].cpu()
-
         output_ref_i = (
-            indices_i[torch.arange(0, kv_len, dtype=torch.int32) // block_size]
+            indices_i[paddle.arange(start=0, end=kv_len, dtype="int32") // block_size]
             * stride_block
-            + (torch.arange(0, kv_len, dtype=torch.int32) % block_size) * stride_n
+            + paddle.arange(start=0, end=kv_len, dtype="int32") % block_size * stride_n
         )
-        torch.testing.assert_close(output_i, output_ref_i)
+        assert paddle.allclose(x=output_i, y=output_ref_i).item(), ""
 
 
 if __name__ == "__main__":

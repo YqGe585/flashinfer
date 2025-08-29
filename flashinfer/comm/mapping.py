@@ -1,21 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# Code imported from TensorRT-LLM/tensorrt_llm/mapping.py
 from typing import List
 
-import torch
+import paddle
 
 
 class Mapping(object):
@@ -124,72 +109,56 @@ class Mapping(object):
         cp_config=None,
         tp_size=1,
         pp_size=1,
-        moe_cluster_size=-1,  # -1 means no moe
-        moe_tp_size=-1,  # -1 means no moe
-        moe_ep_size=-1,  # -1 means no moe
+        moe_cluster_size=-1,
+        moe_tp_size=-1,
+        moe_ep_size=-1,
         attn_tp_size=-1,
         attn_cp_size=-1,
         auto_parallel=False,
         enable_attention_dp=False,
     ):
-        # set default values for non-moe cases
-        # or where only one MOE parallelism size is specified
         if moe_cluster_size == -1:
             moe_cluster_size = 1
-
         if moe_tp_size == -1 and moe_ep_size == -1:
             moe_tp_size = tp_size // moe_cluster_size
             moe_ep_size = 1
-
         elif moe_tp_size == -1:
             moe_tp_size = tp_size // (moe_ep_size * moe_cluster_size)
-
         elif moe_ep_size == -1:
             moe_ep_size = tp_size // (moe_tp_size * moe_cluster_size)
-
         if attn_tp_size == -1 and attn_cp_size == -1:
-            # fallback to ulysses
             attn_tp_size = tp_size * cp_size
             attn_cp_size = 1
-
         elif attn_tp_size == -1:
             attn_tp_size = cp_size * tp_size // attn_cp_size
-
         elif attn_cp_size == -1:
             attn_cp_size = cp_size * tp_size // attn_tp_size
-
         if attn_cp_size != 1:
             raise ValueError(
                 f"attn_cp_size must be 1 for now, but got {attn_tp_size}, {attn_cp_size}."
             )
-
         if auto_parallel:
             if tp_size != 1 or pp_size != 1 or tp_size != 1:
                 raise ValueError(
                     f"When auto parallel is enabled, tp_size, pp_size, cp_size must be 1, but got {tp_size}, {pp_size}, {cp_size}."
                 )
-        else:
-            if tp_size * pp_size * cp_size != world_size:
-                raise ValueError(
-                    f"world_size must equal to tp_size * pp_size * cp_size, but got {world_size} != {tp_size} * {pp_size} * {cp_size}."
-                )
-
+        elif tp_size * pp_size * cp_size != world_size:
+            raise ValueError(
+                f"world_size must equal to tp_size * pp_size * cp_size, but got {world_size} != {tp_size} * {pp_size} * {cp_size}."
+            )
         moe_tp_ep_size = moe_tp_size * moe_ep_size
         moe_tp_cluster_ep_size = moe_tp_ep_size * moe_cluster_size
         if moe_tp_cluster_ep_size != tp_size:
             raise ValueError(
                 f"tp_size must equal to moe_tp_size * moe_ep_size * moe_cluster_size, but got {tp_size} != {moe_tp_size} * {moe_ep_size} * {moe_cluster_size}"
             )
-
         attn_tp_cp_size = attn_tp_size * attn_cp_size
         if attn_tp_cp_size != tp_size * cp_size:
             raise ValueError(
                 f"tp_size * cp_size must equal to attn_tp_size * attn_cp_size, but got {tp_size} * {cp_size} != {attn_tp_size} * {attn_cp_size}"
             )
-
         if moe_ep_size != 1 and cp_size > 1:
             raise NotImplementedError("CP don't support MoE tp/ep yet")
-
         self.tp_size = tp_size
         self.cp_size = cp_size
         self.cp_config = cp_config if cp_config is not None else {}
@@ -210,24 +179,17 @@ class Mapping(object):
         self.moe_cluster_groups = []
         self.moe_tp_groups = []
         self.moe_ep_groups = []
-
         if moe_cluster_size > 1:
             assert moe_ep_size == 1
-
-        # init pp group
         for i in range(tp_size * cp_size):
             ranks = range(i, world_size, tp_size * cp_size)
             self.pp_groups.append(list(ranks))
-
-        # init cp group
         for i in range(pp_size):
             for j in range(tp_size):
                 ranks = range(
                     i * tp_size * cp_size + j, (i + 1) * tp_size * cp_size + j, tp_size
                 )
                 self.cp_groups.append(list(ranks))
-
-        # init tp group
         for i in range(pp_size):
             for j in range(cp_size):
                 ranks = range(
@@ -235,8 +197,6 @@ class Mapping(object):
                     i * tp_size * cp_size + (j + 1) * tp_size,
                 )
                 self.tp_groups.append(list(ranks))
-
-        # init moe tp group
         for i in range(pp_size):
             for j in range(moe_cluster_size * moe_ep_size):
                 ranks = range(
@@ -245,8 +205,6 @@ class Mapping(object):
                     moe_cluster_size * moe_ep_size,
                 )
                 self.moe_tp_groups.append(list(ranks))
-
-        # init moe cluster group
         for i in range(pp_size):
             for j in range(moe_tp_size):
                 ranks = range(
@@ -255,8 +213,6 @@ class Mapping(object):
                     + (j + 1) * moe_cluster_size * moe_ep_size,
                 )
                 self.moe_cluster_groups.append(list(ranks))
-
-        # init moe ep group
         for i in range(pp_size):
             for j in range(moe_tp_size):
                 for k in range(moe_cluster_size):
@@ -273,7 +229,6 @@ class Mapping(object):
     def __eq__(self, other):
         if not isinstance(other, Mapping):
             return NotImplemented
-
         return (
             self.world_size == other.world_size
             and self.rank == other.rank
@@ -313,7 +268,6 @@ class Mapping(object):
 
     @rank.setter
     def rank(self, rank: int):
-        # TODO(qijun): skip check for enable_attention_dp temporarily, will support attention_dp_size
         if not self.enable_attention_dp:
             if not isinstance(rank, int) or rank < 0 and rank >= self.world_size:
                 raise ValueError(
@@ -440,10 +394,9 @@ class Mapping(object):
         return self.moe_ep_size > 1
 
     def pp_layers(self, num_layers: int) -> List[int]:
-        # If num_layers % pp_size = n != 0, first n ranks get one extra layer
-        return torch.tensor_split(torch.arange(num_layers), self.pp_size)[
-            self.pp_rank
-        ].tolist()
+        return paddle.tensor_split(
+            x=paddle.arange(end=num_layers), num_or_indices=self.pp_size
+        )[self.pp_rank].tolist()
 
     def ep_experts(self, num_experts: int) -> List[int]:
         assert self.cp_size == 1

@@ -13,8 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-attention_sink_fa2_decl = r"""
+attention_sink_fa2_decl = """
 struct AttentionSink : AttentionVariantBase {
   static constexpr bool use_softmax = true;
 
@@ -51,8 +50,7 @@ struct AttentionSink : AttentionVariantBase {
   });
 };
 """
-
-attention_sink_fa3_decl = r"""
+attention_sink_fa3_decl = """
 
 template <int NUM_ROWS_PER_THREAD>
 struct OnlineSoftmaxWithSink {
@@ -162,8 +160,4 @@ struct AttentionSink : AttentionVariantBase {
   }
 };
 """
-
-attention_sink_decl = {
-    "fa2": attention_sink_fa2_decl,
-    "fa3": attention_sink_fa3_decl,
-}
+attention_sink_decl = {"fa2": attention_sink_fa2_decl, "fa3": attention_sink_fa3_decl}

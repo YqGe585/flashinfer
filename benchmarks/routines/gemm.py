@@ -1,23 +1,20 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
 from collections import defaultdict
 
+import einops
 import numpy as np
-import torch
-import torch.nn.functional as F
-from einops import einsum
+import paddle
+from paddle_utils import *
 
 import flashinfer
-from flashinfer.testing.utils import (
-    bench_gpu_time,
-    bench_gpu_time_with_cudagraph,
-    dequantize_fp8,
-    quantize_fp8,
-)
+from flashinfer.testing.utils import (bench_gpu_time,
+                                      bench_gpu_time_with_cudagraph,
+                                      dequantize_fp8, quantize_fp8)
 
-from .flashinfer_benchmark_utils import (
-    dtype_str_to_torch_dtype,
-    get_device,
-    print_perf_metrics,
-)
+from .flashinfer_benchmark_utils import (dtype_str_to_torch_dtype, get_device,
+                                         print_perf_metrics)
 
 
 def run_gemm_test(args):
@@ -137,20 +134,24 @@ def parse_gemm_args(line, parser):
         action="store_true",
         help="Use 128x4 SF layout for the input and mat2.",
     )
-
     args = parser.parse_args(line)
     if args.verbose >= 1:
-        print(f"[INFO] {args = }")
+        print(f"[INFO] args = {args!r}")
     return args
 
 
-def to_float8(x, dtype=torch.float8_e4m3fn):
-    finfo = torch.finfo(dtype)
-    min_val, max_val = x.aminmax()
-    amax = torch.maximum(min_val.abs(), max_val.abs()).clamp(min=1e-12)
+>>>>>>def to_float8(x, dtype=torch.float8_e4m3fn):
+    finfo = paddle.finfo(dtype=dtype)
+    min_val, max_val = tuple(
+        [
+            paddle.amin(x, axis=None, keepdim=False),
+            paddle.max(x, axis=None, keepdim=False),
+        ]
+    )
+    amax = paddle.maximum(x=min_val.abs(), y=max_val.abs()).clip(min=1e-12)
     scale = finfo.max / amax
-    x_scl_sat = (x * scale).clamp(min=finfo.min, max=finfo.max)
-    return x_scl_sat.to(dtype), scale.float().reciprocal()
+    x_scl_sat = (x * scale).clip(min=finfo.min, max=finfo.max)
+    return x_scl_sat.to(dtype), scale.astype(dtype="float32").reciprocal()
 
 
 def testGemmFp8NtGroupwise(args):
@@ -173,14 +174,11 @@ def testGemmFp8NtGroupwise(args):
     if args.verbose >= 1:
         print("[INFO] Running testGemmFp8NtGroupwise")
         print(f"[INFO] FlashInfer version: {flashinfer.__version__}")
-
     device = get_device(args)
     if args.generate_repro_command:
         print(
             f"[INFO] To reproduce this test case, run the following command: {args.repro_command}"
         )
-
-    ## Parse input arguments
     backends = args.backends
     m = args.m
     n = args.n
@@ -190,56 +188,43 @@ def testGemmFp8NtGroupwise(args):
     mma_sm = args.mma_sm
     is_cuda_graph_compatible = not args.no_cuda_graph
     run_refcheck = args.refcheck
-
     out_dtype = dtype_str_to_torch_dtype(args.out_dtype)
-    if out_dtype not in [torch.bfloat16, torch.float16]:
+    if out_dtype not in ["bfloat16", "float16"]:
         raise ValueError(f"Unsupported output dtype: {args.out_dtype}")
-    ## Done parsing input arguments
-
     if "trtllm" in backends:
         remove_trtllm = True
         print("[INFO] trtllm backend testing not supported yet")
         if remove_trtllm:
             backends.remove("trtllm")
-
-    ## Prepare input tensors
-    a_val = torch.randn((m, k), dtype=torch.float, device=device)
-    b_val = torch.randn((n, k), dtype=torch.float, device=device) / np.sqrt(k)
-
+    a_val = paddle.randn(shape=(m, k), dtype="float32")
+    b_val = paddle.randn(shape=(n, k), dtype="float32") / np.sqrt(k)
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {a_val.shape = }")
-        print(f"[VVERBOSE] {b_val.shape = }")
-
+        print(f"[VVERBOSE] a_val.shape = {tuple(a_val.shape)!r}")
+        print(f"[VVERBOSE] b_val.shape = {tuple(b_val.shape)!r}")
     if scale_major_mode == "K":
-        a_scale_shape = (m, k // tile_size)
-        b_scale_shape = (n // tile_size, k // tile_size)
+        a_scale_shape = m, k // tile_size
+        b_scale_shape = n // tile_size, k // tile_size
     else:
-        a_scale_shape = (k // tile_size, m)
-        b_scale_shape = (k // tile_size, n // tile_size)
-
-    a_tile_shape = (1, tile_size)
-    b_tile_shape = (tile_size, tile_size)
-
+        a_scale_shape = k // tile_size, m
+        b_scale_shape = k // tile_size, n // tile_size
+    a_tile_shape = 1, tile_size
+    b_tile_shape = tile_size, tile_size
     a_fp8, a_scale = quantize_fp8(a_val, a_scale_shape, a_tile_shape, scale_major_mode)
     b_fp8, b_scale = quantize_fp8(b_val, b_scale_shape, b_tile_shape, scale_major_mode)
-
     if "trtllm" in backends:
-        a_scale_shape_trtllm = (m, k // tile_size)
-        b_scale_shape_trtllm = (k // tile_size, n // tile_size)
-
+        a_scale_shape_trtllm = m, k // tile_size
+        b_scale_shape_trtllm = k // tile_size, n // tile_size
         a_fp8_trtllm, a_scale_trtllm = quantize_fp8(
             a_val, a_scale_shape_trtllm, a_tile_shape, "K"
         )
         b_fp8_trtllm, b_scale_trtllm = quantize_fp8(
             b_val, b_scale_shape_trtllm, b_tile_shape, "MN"
         )
-
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {a_fp8.shape = }")
-        print(f"[VVERBOSE] {b_fp8.shape = }")
-        print(f"[VVERBOSE] {a_scale.shape = }")
-        print(f"[VVERBOSE] {b_scale.shape = }")
-
+        print(f"[VVERBOSE] a_fp8.shape = {tuple(a_fp8.shape)!r}")
+        print(f"[VVERBOSE] b_fp8.shape = {tuple(b_fp8.shape)!r}")
+        print(f"[VVERBOSE] a_scale.shape = {tuple(a_scale.shape)!r}")
+        print(f"[VVERBOSE] b_scale.shape = {tuple(b_scale.shape)!r}")
     a_dequant = dequantize_fp8(a_fp8, a_scale, scale_major_mode)
     b_dequant = dequantize_fp8(b_fp8, b_scale, scale_major_mode)
 
@@ -271,10 +256,10 @@ def testGemmFp8NtGroupwise(args):
 
     has_reference_output = False
     if run_refcheck:
-        reference_output = einsum(a_dequant, b_dequant, "m k, n k -> m n").to(out_dtype)
+        reference_output = einops.einsum(a_dequant, b_dequant, "m k, n k -> m n").to(
+            out_dtype
+        )
         has_reference_output = True
-
-    # Storage for timing results and outputs
     backend_times = {backend: [] for backend in backends}
     outputs = {}
     for cur_backend in backends:
@@ -288,7 +273,7 @@ def testGemmFp8NtGroupwise(args):
                 l2_flush=True,
                 l2_flush_size_mb=256,
                 l2_flush_device=device,
-                sleep_after_run=True,  # GEMMs are very MMA-heavy, so prefer sleep to reduce throttling.
+                sleep_after_run=True,
             )
         else:
             backend_times[cur_backend] = bench_gpu_time(
@@ -298,18 +283,17 @@ def testGemmFp8NtGroupwise(args):
                 l2_flush=True,
                 l2_flush_size_mb=256,
                 l2_flush_device=device,
-                sleep_after_run=True,  # GEMMs are very MMA-heavy, so prefer sleep to reduce throttling.
+                sleep_after_run=True,
             )
-
     tested_backends = list(outputs.keys())
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 0:
         if run_refcheck and has_reference_output:
             for i in range(len(tested_backends)):
                 try:
-                    torch.testing.assert_close(
-                        reference_output, tested_outputs[i], rtol=1e-2, atol=1e-2
-                    )
+                    assert paddle.allclose(
+                        x=reference_output, y=tested_outputs[i], rtol=0.01, atol=0.01
+                    ).item(), ""
                 except AssertionError as e:
                     print(
                         f"[ERROR] Output tensor mismatch from backend {tested_backends[i]}"
@@ -317,21 +301,18 @@ def testGemmFp8NtGroupwise(args):
                     if not args.allow_output_mismatch:
                         print(e)
                         raise
-
     res = []
     for backend in backends:
         if len(backend_times[backend]) > 0:
             median_time = np.median(backend_times[backend])
             std_time = np.std(backend_times[backend])
-
             problem_flops = 2 * m * n * k
-            problem_bytes = (m * k + n * k) * torch.float8_e4m3fn.itemsize + (
-                m * n
-            ) * out_dtype.itemsize
-            tflops = problem_flops / (10**9 * median_time)  # in TFLOPs/sec
-            tb_per_sec = problem_bytes / (10**9 * median_time)  # in TB/sec
+            problem_bytes = (
+                m * k + n * k
+>>>>>>            ) * torch.float8_e4m3fn.itemsize + m * n * out_dtype.element_size()
+            tflops = problem_flops / (10**9 * median_time)
+            tb_per_sec = problem_bytes / (10**9 * median_time)
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
-
         if args.output_path is not None:
             cur_res = defaultdict(str)
             cur_res["routine"] = args.routine
@@ -372,15 +353,12 @@ def testGroupGemmFp8NtGroupwise(args):
     if args.verbose >= 1:
         print("[INFO] Running testGroupGemmFp8NtGroupwise")
         print(f"[INFO] FlashInfer version: {flashinfer.__version__}")
-
     device = get_device(args)
     if args.generate_repro_command:
         print(
             f"[INFO] To reproduce this test case, run the following command: {args.repro_command}"
         )
-
-    ## Parse input arguments
-    backends = ["cutlass"]  # Cutlass is currently the only supported backend
+    backends = ["cutlass"]
     m = args.m
     n = args.n
     k = args.k
@@ -390,45 +368,33 @@ def testGroupGemmFp8NtGroupwise(args):
     mma_sm = args.mma_sm
     is_cuda_graph_compatible = not args.no_cuda_graph
     run_refcheck = args.refcheck
-
     out_dtype = dtype_str_to_torch_dtype(args.out_dtype)
-    if out_dtype not in [torch.bfloat16, torch.float16]:
+    if out_dtype not in ["bfloat16", "float16"]:
         raise ValueError(f"Unsupported output dtype: {args.out_dtype}")
-    ## Done parsing input arguments
-    ## Prepare input tensors
-    a_val = torch.randn((group_size * m, k), dtype=torch.float, device="cuda")
-    b_val = torch.randn((group_size, n, k), dtype=torch.float, device="cuda") / np.sqrt(
-        k
-    )
-
+    a_val = paddle.randn(shape=(group_size * m, k), dtype="float32")
+    b_val = paddle.randn(shape=(group_size, n, k), dtype="float32") / np.sqrt(k)
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {a_val.shape = }")
-        print(f"[VVERBOSE] {b_val.shape = }")
-
+        print(f"[VVERBOSE] a_val.shape = {tuple(a_val.shape)!r}")
+        print(f"[VVERBOSE] b_val.shape = {tuple(b_val.shape)!r}")
     if scale_major_mode == "K":
-        a_scale_shape = (group_size * m, k // tile_size)
-        b_scale_shape = (group_size, n // tile_size, k // tile_size)
+        a_scale_shape = group_size * m, k // tile_size
+        b_scale_shape = group_size, n // tile_size, k // tile_size
     else:
-        a_scale_shape = (k // tile_size, m * group_size)
-        b_scale_shape = (group_size, k // tile_size, n // tile_size)
-
-    a_tile_shape = (1, tile_size)
-    b_tile_shape = (1, tile_size, tile_size)
-
+        a_scale_shape = k // tile_size, m * group_size
+        b_scale_shape = group_size, k // tile_size, n // tile_size
+    a_tile_shape = 1, tile_size
+    b_tile_shape = 1, tile_size, tile_size
     a_fp8, a_scale = quantize_fp8(a_val, a_scale_shape, a_tile_shape, scale_major_mode)
     b_fp8, b_scale = quantize_fp8(b_val, b_scale_shape, b_tile_shape, scale_major_mode)
-
     a_dequant = dequantize_fp8(a_fp8, a_scale, scale_major_mode)
     b_dequant = dequantize_fp8(b_fp8, b_scale, scale_major_mode)
-
-    m_indptr = torch.arange(0, group_size + 1, dtype=torch.int32, device="cuda") * m
-
+    m_indptr = paddle.arange(start=0, end=group_size + 1, dtype="int32") * m
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {a_fp8.shape = }")
-        print(f"[VVERBOSE] {b_fp8.shape = }")
-        print(f"[VVERBOSE] {a_scale.shape = }")
-        print(f"[VVERBOSE] {b_scale.shape = }")
-        print(f"[VVERBOSE] {m_indptr.shape = }")
+        print(f"[VVERBOSE] a_fp8.shape = {tuple(a_fp8.shape)!r}")
+        print(f"[VVERBOSE] b_fp8.shape = {tuple(b_fp8.shape)!r}")
+        print(f"[VVERBOSE] a_scale.shape = {tuple(a_scale.shape)!r}")
+        print(f"[VVERBOSE] b_scale.shape = {tuple(b_scale.shape)!r}")
+        print(f"[VVERBOSE] m_indptr.shape = {tuple(m_indptr.shape)!r}")
 
     def run_backend(backend):
         if backend == "cutlass":
@@ -448,15 +414,13 @@ def testGroupGemmFp8NtGroupwise(args):
     has_reference_output = False
     if run_refcheck:
         reference_output = (
-            einsum(
+            einops.einsum(
                 a_dequant.view((group_size, m, k)), b_dequant, "b m k, b n k -> b m n"
             )
             .view((group_size * m, n))
             .to(out_dtype)
         )
         has_reference_output = True
-
-    # Storage for timing results and outputs
     backend_times = {backend: [] for backend in backends}
     outputs = {}
     for cur_backend in backends:
@@ -470,7 +434,7 @@ def testGroupGemmFp8NtGroupwise(args):
                 l2_flush=True,
                 l2_flush_size_mb=256,
                 l2_flush_device=device,
-                sleep_after_run=True,  # GEMMs are very MMA-heavy, so prefer sleep to reduce throttling.
+                sleep_after_run=True,
             )
         else:
             backend_times[cur_backend] = bench_gpu_time(
@@ -480,18 +444,17 @@ def testGroupGemmFp8NtGroupwise(args):
                 l2_flush=True,
                 l2_flush_size_mb=256,
                 l2_flush_device=device,
-                sleep_after_run=True,  # GEMMs are very MMA-heavy, so prefer sleep to reduce throttling.
+                sleep_after_run=True,
             )
-
     tested_backends = list(outputs.keys())
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 0:
         if run_refcheck and has_reference_output:
             for i in range(len(tested_backends)):
                 try:
-                    torch.testing.assert_close(
-                        reference_output, tested_outputs[i], rtol=1e-2, atol=1e-2
-                    )
+                    assert paddle.allclose(
+                        x=reference_output, y=tested_outputs[i], rtol=0.01, atol=0.01
+                    ).item(), ""
                 except AssertionError as e:
                     print(
                         f"[ERROR] Output tensor mismatch from backend {tested_backends[i]}"
@@ -499,7 +462,6 @@ def testGroupGemmFp8NtGroupwise(args):
                     if not args.allow_output_mismatch:
                         print(e)
                         raise
-
     res = []
     for backend in backends:
         if len(backend_times[backend]) > 0:
@@ -507,13 +469,12 @@ def testGroupGemmFp8NtGroupwise(args):
             std_time = np.std(backend_times[backend])
             problem_flops = 2 * m * n * k * group_size
             problem_bytes = (
-                group_size * m * k + group_size * n * k
-            ) * torch.float8_e4m3fn.itemsize + (group_size * m * n) * out_dtype.itemsize
-            tflops = problem_flops / (10**9 * median_time)  # in TFLOPs/sec
-            tb_per_sec = problem_bytes / (10**9 * median_time)  # in TB/sec
-
+>>>>>>                (group_size * m * k + group_size * n * k) * torch.float8_e4m3fn.itemsize
+                + group_size * m * n * out_dtype.element_size()
+            )
+            tflops = problem_flops / (10**9 * median_time)
+            tb_per_sec = problem_bytes / (10**9 * median_time)
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
-
         if args.output_path is not None:
             cur_res = defaultdict(str)
             cur_res["routine"] = args.routine
@@ -555,14 +516,11 @@ def testBmmFp8(args):
     if args.verbose >= 1:
         print("[INFO] Running testBmmFp8")
         print(f"[INFO] FlashInfer version: {flashinfer.__version__}")
-
     device = get_device(args)
     if args.generate_repro_command:
         print(
             f"[INFO] To reproduce this test case, run the following command: {args.repro_command}"
         )
-
-    ## Parse input arguments
     backends = args.backends
     batch_size = args.batch_size
     m = args.m
@@ -574,44 +532,38 @@ def testBmmFp8(args):
     backends = args.backends
     is_cuda_graph_compatible = not args.no_cuda_graph
     run_refcheck = args.refcheck
-
     input_dtype = dtype_str_to_torch_dtype(args.input_dtype)
-    if input_dtype not in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if input_dtype not in [torch.float8_e4m3fn, torch.float8_e5m2]:
         raise ValueError(
             f"Unsupported input dtype: {input_dtype}. Supported dtypes are fp8_e4m3 and fp8_e5m2."
         )
-
     mat2_dtype = dtype_str_to_torch_dtype(args.mat2_dtype)
-    if mat2_dtype not in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    if mat2_dtype not in [torch.float8_e4m3fn, torch.float8_e5m2]:
         raise ValueError(
             f"Unsupported mat2 dtype: {mat2_dtype}. Supported dtypes are fp8_e4m3 and fp8_e5m2."
         )
-
     res_dtype = dtype_str_to_torch_dtype(args.out_dtype)
-    if res_dtype not in [torch.bfloat16, torch.float16]:
+    if res_dtype not in ["bfloat16", "float16"]:
         raise ValueError(
             f"Unsupported res dtype: {res_dtype}. Supported dtypes are bfloat16 and float16."
         )
-    ## Done parsing input arguments
-
-    ## Prepare input tensors
-    input = torch.randn([batch_size, m, k], device=device, dtype=torch.bfloat16)
+    input = paddle.randn(shape=[batch_size, m, k], dtype="bfloat16")
     input_fp8, input_inv_s = to_float8(input, dtype=input_dtype)
-
-    mat2 = torch.randn(
-        [batch_size, n, k], device=device, dtype=torch.bfloat16
-    ).transpose(-2, -1)
+    mat2 = paddle.randn(shape=[batch_size, n, k], dtype="bfloat16").transpose(
+        perm=dim2perm(
+            paddle.randn(shape=[batch_size, n, k], dtype="bfloat16").ndim, -2, -1
+        )
+    )
     mat2_fp8, mat2_inv_s = to_float8(mat2, dtype=mat2_dtype)
-
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {input_fp8.shape = }")
-        print(f"[VVERBOSE] {input_fp8.dtype = }")
-        print(f"[VVERBOSE] {mat2_fp8.shape = }")
-        print(f"[VVERBOSE] {mat2_fp8.dtype = }")
-        print(f"[VVERBOSE] {input_inv_s = }")
-        print(f"[VVERBOSE] {input_inv_s.dtype = }")
-        print(f"[VVERBOSE] {mat2_inv_s = }")
-        print(f"[VVERBOSE] {mat2_inv_s.dtype = }")
+        print(f"[VVERBOSE] input_fp8.shape = {tuple(input_fp8.shape)!r}")
+        print(f"[VVERBOSE] input_fp8.dtype = {input_fp8.dtype!r}")
+        print(f"[VVERBOSE] mat2_fp8.shape = {tuple(mat2_fp8.shape)!r}")
+        print(f"[VVERBOSE] mat2_fp8.dtype = {mat2_fp8.dtype!r}")
+        print(f"[VVERBOSE] input_inv_s = {input_inv_s!r}")
+        print(f"[VVERBOSE] input_inv_s.dtype = {input_inv_s.dtype!r}")
+        print(f"[VVERBOSE] mat2_inv_s = {mat2_inv_s!r}")
+        print(f"[VVERBOSE] mat2_inv_s.dtype = {mat2_inv_s.dtype!r}")
 
     def run_backend(backend):
         if backend in ["cudnn", "cublas", "cutlass"]:
@@ -628,10 +580,8 @@ def testBmmFp8(args):
 
     has_reference_output = False
     if run_refcheck:
-        reference_output = torch.bmm(input, mat2)
+        reference_output = paddle.bmm(x=input, y=mat2)
         has_reference_output = True
-
-    # Storage for timing results and outputs
     backend_times = {backend: [] for backend in backends}
     outputs = {}
     for cur_backend in backends:
@@ -658,23 +608,22 @@ def testBmmFp8(args):
                 l2_flush_device=device,
                 sleep_after_run=True,
             )
-
     tested_backends = list(outputs.keys())
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 0:
         if run_refcheck and has_reference_output:
-            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>            if reference_output.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
                 print(
                     "[INFO] Reference output is FP8. Converting to float32 for reference check."
                 )
-                reference_output = reference_output.to(torch.float32)
-                tested_outputs = [output.to(torch.float32) for output in tested_outputs]
+                reference_output = reference_output.to("float32")
+                tested_outputs = [output.to("float32") for output in tested_outputs]
             for i in range(len(tested_backends)):
                 try:
-                    cos_sim = F.cosine_similarity(
-                        reference_output.reshape(-1),
-                        tested_outputs[i].reshape(-1),
-                        dim=0,
+                    cos_sim = paddle.nn.functional.cosine_similarity(
+                        x1=reference_output.reshape(-1),
+                        x2=tested_outputs[i].reshape(-1),
+                        axis=0,
                     )
                     assert cos_sim > 0.99
                 except AssertionError as e:
@@ -684,7 +633,6 @@ def testBmmFp8(args):
                     if not args.allow_output_mismatch:
                         print(e)
                         raise
-
     res = []
     for backend in backends:
         if len(backend_times[backend]) > 0:
@@ -692,14 +640,13 @@ def testBmmFp8(args):
             std_time = np.std(backend_times[backend])
             problem_flops = 2 * m * n * k * batch_size
             problem_bytes = (
-                m * k * input_dtype.itemsize
-                + n * k * mat2_dtype.itemsize
-                + m * n * res_dtype.itemsize
+                m * k * input_dtype.element_size()
+                + n * k * mat2_dtype.element_size()
+                + m * n * res_dtype.element_size()
             )
-            tflops = problem_flops / (10**9 * median_time)  # in TFLOPs/sec
-            tb_per_sec = problem_bytes / (10**9 * median_time)  # in TB/sec
+            tflops = problem_flops / (10**9 * median_time)
+            tb_per_sec = problem_bytes / (10**9 * median_time)
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
-
             if args.output_path is not None:
                 cur_res = defaultdict(str)
                 cur_res["batch_size"] = batch_size
@@ -740,14 +687,11 @@ def testMmFp4(args):
     if args.verbose >= 1:
         print("[INFO] Running testMmFp4")
         print(f"[INFO] FlashInfer version: {flashinfer.__version__}")
-
     device = get_device(args)
     if args.generate_repro_command:
         print(
             f"[INFO] To reproduce this test case, run the following command: {args.repro_command}"
         )
-
-    ## Parse input arguments
     backends = args.backends
     m = args.m
     n = args.n
@@ -757,17 +701,14 @@ def testMmFp4(args):
     is_cuda_graph_compatible = not args.no_cuda_graph
     run_refcheck = args.refcheck
     use_128x4_sf_layout = args.use_128x4_sf_layout
-
     res_dtype = dtype_str_to_torch_dtype(args.out_dtype)
-    if res_dtype not in [torch.bfloat16, torch.float16]:
+    if res_dtype not in ["bfloat16", "float16"]:
         raise ValueError(
             f"Unsupported res dtype: {res_dtype}. Supported dtypes are bfloat16 and float16."
         )
-    ## Done parsing input arguments
-
     if "trtllm" in backends:
         remove_trtllm = False
-        if res_dtype == torch.float16:
+        if res_dtype == "float16":
             print("[INFO] trtllm backend does not suppot float16 output")
             remove_trtllm = True
         if remove_trtllm:
@@ -786,22 +727,18 @@ def testMmFp4(args):
             remove_cudnn = True
         if remove_cudnn:
             backends.remove("cudnn")
-
     if len(backends) == 0:
         print("[ERROR] No backends to test. Exiting.")
         return
-
-    input = torch.randn([m, k], device=device, dtype=torch.bfloat16)
-    mat2 = torch.randn([n, k], device=device, dtype=torch.bfloat16)
+    input = paddle.randn(shape=[m, k], dtype="bfloat16")
+    mat2 = paddle.randn(shape=[n, k], dtype="bfloat16")
     a_sf_layout = (
         flashinfer.SfLayout.layout_128x4
         if use_128x4_sf_layout
         else flashinfer.SfLayout.layout_8x4
     )
-
-    global_sf_input = (448 * 6) / input.float().abs().nan_to_num().max()
-    global_sf_mat2 = (448 * 6) / mat2.float().abs().nan_to_num().max()
-
+    global_sf_input = 448 * 6 / input.astype(dtype="float32").abs().nan_to_num()._max()
+    global_sf_mat2 = 448 * 6 / mat2.astype(dtype="float32").abs().nan_to_num()._max()
     input_fp4, input_inv_s = flashinfer.nvfp4_quantize(
         input, global_sf_input, sfLayout=a_sf_layout, do_shuffle=False
     )
@@ -818,15 +755,12 @@ def testMmFp4(args):
             sfLayout=flashinfer.SfLayout.layout_128x4,
             do_shuffle=True,
         )
-
     if args.verbose >= 2:
-        print(f"[VVERBOSE] {input_fp4.shape = }")
-        print(f"[VVERBOSE] {input_fp4.dtype = }")
-        print(f"[VVERBOSE] {mat2_fp4.shape = }")
-        print(f"[VVERBOSE] {mat2_fp4.dtype = }")
-
+        print(f"[VVERBOSE] input_fp4.shape = {tuple(input_fp4.shape)!r}")
+        print(f"[VVERBOSE] input_fp4.dtype = {input_fp4.dtype!r}")
+        print(f"[VVERBOSE] mat2_fp4.shape = {tuple(mat2_fp4.shape)!r}")
+        print(f"[VVERBOSE] mat2_fp4.dtype = {mat2_fp4.dtype!r}")
     alpha = 1.0 / (global_sf_input * global_sf_mat2)
-    # res = torch.empty([m, n], device="cuda", dtype=res_dtype)
 
     def run_backend(backend):
         if backend in ["cudnn", "trtllm", "cutlass"]:
@@ -837,7 +771,7 @@ def testMmFp4(args):
                 b_descale=mat2_inv_s.T if backend != "trtllm" else mat2_inv_s_trtllm.T,
                 alpha=alpha,
                 out_dtype=res_dtype,
-                block_size=16,  # Only supports 16
+                block_size=16,
                 use_8x4_sf_layout=not use_128x4_sf_layout,
                 backend=backend,
             )
@@ -846,10 +780,8 @@ def testMmFp4(args):
 
     has_reference_output = False
     if run_refcheck:
-        reference_output = torch.mm(input, mat2.T)
+        reference_output = paddle.mm(input=input, mat2=mat2.T)
         has_reference_output = True
-
-    # Storage for timing results and outputs
     backend_times = {backend: [] for backend in backends}
     outputs = {}
     for cur_backend in backends:
@@ -876,17 +808,16 @@ def testMmFp4(args):
                 l2_flush_device=device,
                 sleep_after_run=True,
             )
-
     tested_backends = list(outputs.keys())
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 0:
         if run_refcheck and has_reference_output:
             for i in range(len(tested_backends)):
                 try:
-                    cos_sim = F.cosine_similarity(
-                        reference_output.reshape(-1),
-                        tested_outputs[i].reshape(-1),
-                        dim=0,
+                    cos_sim = paddle.nn.functional.cosine_similarity(
+                        x1=reference_output.reshape(-1),
+                        x2=tested_outputs[i].reshape(-1),
+                        axis=0,
                     )
                     assert cos_sim > 0.97
                 except AssertionError as e:
@@ -896,20 +827,16 @@ def testMmFp4(args):
                     if not args.allow_output_mismatch:
                         print(e)
                         raise
-
     res = []
     for backend in backends:
         if len(backend_times[backend]) > 0:
             median_time = np.median(backend_times[backend])
             std_time = np.std(backend_times[backend])
             problem_flops = 2 * m * n * k
-            problem_bytes = (
-                m * k * 0.5 + n * k * 0.5 + m * n * res_dtype.itemsize
-            )  # 0.5 for fp4
-            tflops = problem_flops / (10**9 * median_time)  # in TFLOPs/sec
-            tb_per_sec = problem_bytes / (10**9 * median_time)  # in TB/sec
+            problem_bytes = m * k * 0.5 + n * k * 0.5 + m * n * res_dtype.element_size()
+            tflops = problem_flops / (10**9 * median_time)
+            tb_per_sec = problem_bytes / (10**9 * median_time)
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
-
             if args.output_path is not None:
                 cur_res = defaultdict(str)
                 cur_res["routine"] = args.routine

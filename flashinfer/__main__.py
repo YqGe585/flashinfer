@@ -13,8 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-# flashinfer-cli
 import argparse
 
 from .artifacts import download_artifacts
@@ -24,9 +22,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--download-cubin", action="store_true", help="Download artifacts"
     )
-
     args = parser.parse_args()
-
     if args.download_cubin:
         if download_artifacts():
             print("✅ All cubin download tasks completed successfully.")

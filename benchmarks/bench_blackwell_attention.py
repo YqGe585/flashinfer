@@ -1,3 +1,5 @@
+import paddle
+
 """
 Copyright (c) 2025 by FlashInfer team.
 
@@ -13,40 +15,24 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import numpy as np
-import torch
 
 import flashinfer
 from flashinfer.testing.utils import bench_gpu_time
 
 
-def bench_fmha_blackwell(
-    batch_size,
-    qkv_len,
-    num_heads,
-    head_dim,
-    causal,
-    dtype,
-):
-    q = torch.randn(
-        batch_size * qkv_len, num_heads, head_dim, dtype=dtype, device="cuda"
-    )
-    k = torch.randn(
-        batch_size * qkv_len, num_heads, head_dim, dtype=dtype, device="cuda"
-    )
-    v = torch.randn(
-        batch_size * qkv_len, num_heads, head_dim, dtype=dtype, device="cuda"
-    )
-
+def bench_fmha_blackwell(batch_size, qkv_len, num_heads, head_dim, causal, dtype):
+    q = paddle.randn(shape=[batch_size * qkv_len, num_heads, head_dim], dtype=dtype)
+    k = paddle.randn(shape=[batch_size * qkv_len, num_heads, head_dim], dtype=dtype)
+    v = paddle.randn(shape=[batch_size * qkv_len, num_heads, head_dim], dtype=dtype)
     qo_segment_offsets = (
-        torch.arange(0, batch_size + 1, device="cuda", dtype=torch.int32) * qkv_len
+        paddle.arange(start=0, end=batch_size + 1, dtype="int32") * qkv_len
     )
     kv_segment_offsets = (
-        torch.arange(0, batch_size + 1, device="cuda", dtype=torch.int32) * qkv_len
+        paddle.arange(start=0, end=batch_size + 1, dtype="int32") * qkv_len
     )
     wrapper = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
-        torch.empty(128 * 1024 * 1024, dtype=dtype, device="cuda"),
+        paddle.empty(shape=128 * 1024 * 1024, dtype=dtype),
         kv_layout="NHD",
         backend="cutlass",
     )
@@ -63,17 +49,33 @@ def bench_fmha_blackwell(
     )
     _o = wrapper.run(q, k, v)
     measurements = bench_gpu_time(
-        lambda: wrapper.run(q, k, v),
-        dry_run_time_ms=100,
-        repeat_time_ms=1000,
+        lambda: wrapper.run(q, k, v), dry_run_time_ms=100, repeat_time_ms=1000
     )
     ms = np.median(measurements)
 
     def flops(ms):
         if causal:
-            return batch_size * qkv_len * qkv_len * num_heads * head_dim * 2 / ms / 1e9
+            return (
+                batch_size
+                * qkv_len
+                * qkv_len
+                * num_heads
+                * head_dim
+                * 2
+                / ms
+                / 1000000000.0
+            )
         else:
-            return batch_size * qkv_len * qkv_len * num_heads * head_dim * 4 / ms / 1e9
+            return (
+                batch_size
+                * qkv_len
+                * qkv_len
+                * num_heads
+                * head_dim
+                * 4
+                / ms
+                / 1000000000.0
+            )
 
     print(
         f"bench_fmha_blackwell (batch_size={batch_size}, qkv_len={qkv_len}, num_heads={num_heads}, head_dim={head_dim}, causal={causal}), flops: {flops(ms):.3f} TFLOPs/s"
@@ -81,20 +83,19 @@ def bench_fmha_blackwell(
 
 
 if __name__ == "__main__":
-    bench_fmha_blackwell(128, 512, 32, 128, False, torch.bfloat16)
-    bench_fmha_blackwell(64, 1024, 32, 128, False, torch.bfloat16)
-    bench_fmha_blackwell(32, 2048, 32, 128, False, torch.bfloat16)
-    bench_fmha_blackwell(16, 4096, 32, 128, False, torch.bfloat16)
-    bench_fmha_blackwell(8, 8192, 32, 128, False, torch.bfloat16)
-    bench_fmha_blackwell(4, 16384, 32, 128, False, torch.bfloat16)
-    bench_fmha_blackwell(2, 32768, 32, 128, False, torch.bfloat16)
-    bench_fmha_blackwell(1, 65536, 32, 128, False, torch.bfloat16)
-
-    bench_fmha_blackwell(128, 512, 32, 128, True, torch.bfloat16)
-    bench_fmha_blackwell(64, 1024, 32, 128, True, torch.bfloat16)
-    bench_fmha_blackwell(32, 2048, 32, 128, True, torch.bfloat16)
-    bench_fmha_blackwell(16, 4096, 32, 128, True, torch.bfloat16)
-    bench_fmha_blackwell(8, 8192, 32, 128, True, torch.bfloat16)
-    bench_fmha_blackwell(4, 16384, 32, 128, True, torch.bfloat16)
-    bench_fmha_blackwell(2, 32768, 32, 128, True, torch.bfloat16)
-    bench_fmha_blackwell(1, 65536, 32, 128, True, torch.bfloat16)
+    bench_fmha_blackwell(128, 512, 32, 128, False, "bfloat16")
+    bench_fmha_blackwell(64, 1024, 32, 128, False, "bfloat16")
+    bench_fmha_blackwell(32, 2048, 32, 128, False, "bfloat16")
+    bench_fmha_blackwell(16, 4096, 32, 128, False, "bfloat16")
+    bench_fmha_blackwell(8, 8192, 32, 128, False, "bfloat16")
+    bench_fmha_blackwell(4, 16384, 32, 128, False, "bfloat16")
+    bench_fmha_blackwell(2, 32768, 32, 128, False, "bfloat16")
+    bench_fmha_blackwell(1, 65536, 32, 128, False, "bfloat16")
+    bench_fmha_blackwell(128, 512, 32, 128, True, "bfloat16")
+    bench_fmha_blackwell(64, 1024, 32, 128, True, "bfloat16")
+    bench_fmha_blackwell(32, 2048, 32, 128, True, "bfloat16")
+    bench_fmha_blackwell(16, 4096, 32, 128, True, "bfloat16")
+    bench_fmha_blackwell(8, 8192, 32, 128, True, "bfloat16")
+    bench_fmha_blackwell(4, 16384, 32, 128, True, "bfloat16")
+    bench_fmha_blackwell(2, 32768, 32, 128, True, "bfloat16")
+    bench_fmha_blackwell(1, 65536, 32, 128, True, "bfloat16")

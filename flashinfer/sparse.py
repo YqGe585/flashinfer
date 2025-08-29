@@ -1,3 +1,10 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
+import einops
+import paddle
+from paddle_utils import *
+
 """
 Copyright (c) 2024 by FlashInfer team.
 
@@ -13,32 +20,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import math
 from typing import Optional, Tuple, Union
-
-import torch
 
 from .decode import get_batch_decode_module
 from .page import block_sparse_indices_to_vector_sparse_offsets
 from .prefill import _compute_page_mask_indptr, get_batch_prefill_module
 from .quantization import segment_packbits
-from .utils import (
-    MaskMode,
-    PosEncodingMode,
-    TensorLayout,
-    _check_pos_encoding_mode,
-    check_shape_dtype_device,
-    _get_cache_alibi_slopes_buf,
-    canonicalize_torch_dtype,
-    determine_attention_backend,
-    device_support_pdl,
-    is_float8,
-)
+from .utils import (MaskMode, PosEncodingMode, TensorLayout,
+                    _check_pos_encoding_mode, _get_cache_alibi_slopes_buf,
+                    canonicalize_torch_dtype, check_shape_dtype_device,
+                    determine_attention_backend, device_support_pdl, is_float8)
 
 
-def convert_bsr_mask_layout(mask: torch.Tensor, indptr: torch.Tensor) -> torch.Tensor:
-    r"""Convert mask from BSR data layout to flashinfer's flattened mask layout.
+def convert_bsr_mask_layout(
+    mask: paddle.Tensor, indptr: paddle.Tensor
+) -> paddle.Tensor:
+    """Convert mask from BSR data layout to flashinfer's flattened mask layout.
 
     Parameters
     ----------
@@ -52,18 +50,20 @@ def convert_bsr_mask_layout(mask: torch.Tensor, indptr: torch.Tensor) -> torch.T
     flattened_mask : torch.Tensor
         A flattenedd mask tensor with shape ``(nnz * R * C,)``.
     """
-    nnz, R, C = mask.shape
+    nnz, R, C = tuple(mask.shape)
     MB = len(indptr) - 1
-    mask_flashinfer = torch.empty((nnz * R * C,), dtype=mask.dtype, device=mask.device)
+    mask_flashinfer = paddle.empty(shape=(nnz * R * C,), dtype=mask.dtype)
     for i in range(MB):
         mask_flashinfer[indptr[i] * R * C : indptr[i + 1] * R * C] = (
-            mask[indptr[i] : indptr[i + 1]].transpose(0, 1).reshape(-1)
+            mask[indptr[i] : indptr[i + 1]]
+            .transpose(perm=dim2perm(mask[indptr[i] : indptr[i + 1]].ndim, 0, 1))
+            .reshape(-1)
         )
     return mask_flashinfer
 
 
 class BlockSparseAttentionWrapper:
-    r"""Wrapper class for attention computation with a block-sparse matrix as attention mask.
+    """Wrapper class for attention computation with a block-sparse matrix as attention mask.
     The definition of block sparse matrix can be found at
     `bsr_matrix <https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.bsr_matrix.html>`_
     in SciPy.
@@ -108,11 +108,9 @@ class BlockSparseAttentionWrapper:
     """
 
     def __init__(
-        self,
-        float_workspace_buffer: torch.Tensor,
-        backend: str = "auto",
+        self, float_workspace_buffer: paddle.Tensor, backend: str = "auto"
     ) -> None:
-        r"""Constructs of :class:`BlockSparseAttentionWrapper`.
+        """Constructs of :class:`BlockSparseAttentionWrapper`.
 
         Parameters
         ----------
@@ -126,38 +124,29 @@ class BlockSparseAttentionWrapper:
             device architecture and kernel availability.
         """
         self._float_workspace_buffer = float_workspace_buffer
-        self.device = float_workspace_buffer.device
-        self._int_workspace_buffer = torch.empty(
-            (8 * 1024 * 1024,), dtype=torch.uint8, device=self.device
+        self.device = float_workspace_buffer.place
+        self._int_workspace_buffer = paddle.empty(
+            shape=(8 * 1024 * 1024,), dtype="uint8"
         )
         if backend in ["fa3", "auto"]:
-            # NOTE(Zihao): assume maximum accumulate kv length is 128M
-            # NOTE(Yilong): 128M is required by video DiT models
-            self._vector_sparse_indices_buffer = torch.empty(
-                (128 * 1024 * 1024,), dtype=torch.int32, device=self.device
+            self._vector_sparse_indices_buffer = paddle.empty(
+                shape=(128 * 1024 * 1024,), dtype="int32"
             )
-            # NOTE(Zihao): assume maximum batch size is 32768
-            self._vector_sparse_indptr_buffer = torch.empty(
-                (32768,), dtype=torch.int32, device=self.device
+            self._vector_sparse_indptr_buffer = paddle.empty(
+                shape=(32768,), dtype="int32"
             )
-
-        self._kv_lens_buffer = torch.empty(
-            (32768,), dtype=torch.int32, device=self.device
-        )
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
-            dtype=torch.uint8,
-            pin_memory=True,
-            device="cpu",
-        )
+        self._kv_lens_buffer = paddle.empty(shape=(32768,), dtype="int32")
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape), dtype="uint8"
+        ).pin_memory()
         self._use_cuda_graph = False
         self._kv_layout = "NHD"
-        self._qo_indptr: Optional[torch.Tensor] = None
-        self._paged_kv_indptr_buf: Optional[torch.Tensor] = None
-        self._paged_kv_indices_buf: Optional[torch.Tensor] = None
-        self._paged_kv_last_page_len: Optional[torch.Tensor] = None
-        self._packed_mask_buf: Optional[torch.Tensor] = None
-        self._mask_indptr_buf: Optional[torch.Tensor] = None
+        self._qo_indptr: Optional[paddle.Tensor] = None
+        self._paged_kv_indptr_buf: Optional[paddle.Tensor] = None
+        self._paged_kv_indices_buf: Optional[paddle.Tensor] = None
+        self._paged_kv_last_page_len: Optional[paddle.Tensor] = None
+        self._packed_mask_buf: Optional[paddle.Tensor] = None
+        self._mask_indptr_buf: Optional[paddle.Tensor] = None
         self.R: Optional[int] = None
         self.C: Optional[int] = None
         self.M: Optional[int] = None
@@ -166,12 +155,12 @@ class BlockSparseAttentionWrapper:
 
     def reset_workspace_buffer(
         self,
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
-        vector_sparse_indices_buffer: Optional[torch.Tensor] = None,
-        vector_sparse_indptr_buffer: Optional[torch.Tensor] = None,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
+        vector_sparse_indices_buffer: Optional[paddle.Tensor] = None,
+        vector_sparse_indptr_buffer: Optional[paddle.Tensor] = None,
     ) -> None:
-        r"""Reset the workspace buffer.
+        """Reset the workspace buffer.
 
         Parameters
         ----------
@@ -185,13 +174,10 @@ class BlockSparseAttentionWrapper:
         """
         self._float_workspace_buffer = float_workspace_buffer
         self._int_workspace_buffer = int_workspace_buffer
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape),
             dtype=self._int_workspace_buffer.dtype,
-            pin_memory=True,
-        )
-
-        # Enable user-defined size
+        ).pin_memory()
         if vector_sparse_indices_buffer is not None:
             self._vector_sparse_indices_buffer = vector_sparse_indices_buffer
         if vector_sparse_indptr_buffer is not None:
@@ -199,8 +185,8 @@ class BlockSparseAttentionWrapper:
 
     def plan(
         self,
-        indptr: torch.Tensor,
-        indices: torch.Tensor,
+        indptr: paddle.Tensor,
+        indices: paddle.Tensor,
         M: int,
         N: int,
         R: int,
@@ -208,8 +194,8 @@ class BlockSparseAttentionWrapper:
         num_qo_heads: int,
         num_kv_heads: int,
         head_dim: int,
-        mask: Optional[torch.Tensor] = None,
-        packed_mask: Optional[torch.Tensor] = None,
+        mask: Optional[paddle.Tensor] = None,
+        packed_mask: Optional[paddle.Tensor] = None,
         causal: bool = False,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
@@ -217,12 +203,12 @@ class BlockSparseAttentionWrapper:
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-        q_data_type: Union[str, torch.dtype] = "float16",
-        kv_data_type: Optional[Union[str, torch.dtype]] = None,
-        o_data_type: Union[str, torch.dtype] = "float16",
+        q_data_type: Union[str, paddle.dtype] = "float16",
+        kv_data_type: Optional[Union[str, paddle.dtype]] = None,
+        o_data_type: Union[str, paddle.dtype] = "float16",
         non_blocking: bool = True,
     ) -> None:
-        r"""Create auxiliary data structures for block sparse attention.
+        """Create auxiliary data structures for block sparse attention.
 
         Parameters
         ----------
@@ -268,7 +254,7 @@ class BlockSparseAttentionWrapper:
             The attention logits soft capping value (used in Gemini, Grok and Gemma-2, etc.), if not
             provided, will be set to ``0``. If greater than 0, the logits will be capped according to
             formula:
-            :math:`\texttt{logits_soft_cap} \times \mathrm{tanh}(x / \texttt{logits_soft_cap})`,
+            :math:`\\texttt{logits_soft_cap} \\times \\mathrm{tanh}(x / \\texttt{logits_soft_cap})`,
             where :math:`x` is the input logits.
         sm_scale : Optional[float]
             The scale used in softmax, if not provided, will be set to
@@ -302,47 +288,38 @@ class BlockSparseAttentionWrapper:
             kv_data_type = q_data_type
         kv_data_type = canonicalize_torch_dtype(kv_data_type)
         self._o_dtype = canonicalize_torch_dtype(o_data_type)
-
         if logits_soft_cap is None:
             logits_soft_cap = 0.0
-
         num_blocks_row = len(indptr) - 1
-        qo_indptr_host = R * torch.arange(num_blocks_row + 1, dtype=torch.int32)
+        qo_indptr_host = R * paddle.arange(dtype="int32", end=num_blocks_row + 1)
         qo_indptr_host[-1] = M
-        qo_indptr = qo_indptr_host.to(indptr.device, non_blocking=non_blocking)
-        if indices.max().item() * C > N:
+        qo_indptr = qo_indptr_host.to(indptr.place, blocking=not non_blocking)
+        if indices._max().item() * C > N:
             raise ValueError("indices out of bound")
-        last_block_len = torch.full(
-            (num_blocks_row,), C, dtype=torch.int32, device=indptr.device
+        last_block_len = paddle.full(
+            shape=(num_blocks_row,), fill_value=C, dtype="int32"
         )
-
         if mask is not None or packed_mask is not None:
             mask_indptr = _compute_page_mask_indptr(
-                qo_indptr,
-                indptr,  # paged_kv_indptr
-                last_block_len,  # paged_kv_last_page_len
-                C,  # page_size
+                qo_indptr, indptr, last_block_len, C
             )
         if packed_mask is None and mask is not None:
-            # first convert BSR mask to flashinfer layout
             mask = convert_bsr_mask_layout(mask, indptr)
-            # create packed mask from mask
             packed_mask, mask_indptr = segment_packbits(
                 mask.contiguous().view(-1), mask_indptr, bitorder="little"
             )
-
-        self._qo_indptr = qo_indptr.to(self.device, non_blocking=non_blocking)
-        self._paged_kv_indptr_buf = indptr.to(self.device, non_blocking=non_blocking)
-        self._paged_kv_indices_buf = indices.to(self.device, non_blocking=non_blocking)
+        self._qo_indptr = qo_indptr.to(self.device, blocking=not non_blocking)
+        self._paged_kv_indptr_buf = indptr.to(self.device, blocking=not non_blocking)
+        self._paged_kv_indices_buf = indices.to(self.device, blocking=not non_blocking)
         self._paged_kv_last_page_len = last_block_len.to(
-            self.device, non_blocking=non_blocking
+            self.device, blocking=not non_blocking
         )
         if packed_mask is not None:
             self._packed_mask_buf = packed_mask.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
             self._mask_indptr_buf = mask_indptr.to(
-                self.device, non_blocking=non_blocking
+                self.device, blocking=not non_blocking
             )
             mask_mode = MaskMode.CUSTOM.value
         else:
@@ -350,23 +327,16 @@ class BlockSparseAttentionWrapper:
             self._mask_indptr_buf = None
             mask_mode = MaskMode.CAUSAL.value if causal else MaskMode.NON_CAUSAL.value
         self._mask_mode = mask_mode
-
         self.M = M
         self.N = N
         self.R = R
         self.C = C
-
         kv_indptr_host = indptr.to("cpu")
-
-        # NOTE(Zihao): we haven't supported mask in cuda-core implementations but it should
-        # be easy to add support for it if needed, leave it as a future work.
-        # at this moment, when mask is provided, we use the tensor-core implementation
         if (
             R * (num_qo_heads // num_kv_heads) < 4
             and mask_mode != MaskMode.CUSTOM.value
-            and q_data_type not in [torch.float8_e4m3fn, torch.float8_e5m2]
+>>>>>>            and q_data_type not in [torch.float8_e4m3fn, torch.float8_e5m2]
         ):
-            # If the operation is not compute-bound, we use the cuda-core implementation
             self._use_tensor_cores = False
             self._cached_module = get_batch_decode_module(
                 q_data_type,
@@ -376,10 +346,9 @@ class BlockSparseAttentionWrapper:
                 head_dim,
                 head_dim,
                 PosEncodingMode[pos_encoding_mode].value,
-                False,  # use_sliding_window
-                logits_soft_cap > 0,  # use_logits_soft_cap
+                False,
+                logits_soft_cap > 0,
             )
-
             self._plan_info = self._cached_module.plan(
                 self._float_workspace_buffer,
                 self._int_workspace_buffer,
@@ -389,63 +358,60 @@ class BlockSparseAttentionWrapper:
                 num_qo_heads,
                 num_kv_heads,
                 C,
-                False,  # is_cuda_graph_enabled
-                -1,  # window_left
-                logits_soft_cap,  # logits_soft_cap
+                False,
+                -1,
+                logits_soft_cap,
                 head_dim,
                 head_dim,
-                torch.empty(0, dtype=q_data_type),
-                torch.empty(0, dtype=kv_data_type),
+                paddle.empty(shape=[0], dtype=q_data_type),
+                paddle.empty(shape=[0], dtype=kv_data_type),
             )
         else:
-            # if the operation is compute-bound, we use the tensor-core implementation
             self._use_tensor_cores = True
-
             if self._backend == "auto":
                 self._backend = determine_attention_backend(
                     self.device,
                     PosEncodingMode[pos_encoding_mode].value,
                     use_fp16_qk_reduction,
-                    mask_mode == MaskMode.CUSTOM.value,  # use_custom_mask
+                    mask_mode == MaskMode.CUSTOM.value,
                     q_data_type,
                     kv_data_type,
                 )
-
             get_module_args = (
                 q_data_type,
                 kv_data_type,
                 self._o_dtype,
                 indptr.dtype,
-                head_dim,  # head_dim_qk
-                head_dim,  # head_dim_vo
+                head_dim,
+                head_dim,
                 PosEncodingMode[pos_encoding_mode].value,
-                False,  # use_sliding_window
-                logits_soft_cap > 0,  # use_logits_soft_cap
+                False,
+                logits_soft_cap > 0,
                 use_fp16_qk_reduction,
             )
             self._cached_module = get_batch_prefill_module(
                 self._backend, *get_module_args
             )
-
             kv_lens_arr_host = (kv_indptr_host[1:] - kv_indptr_host[:-1]) * self.C
-            self._kv_lens_buffer[: len(kv_lens_arr_host)].copy_(
-                kv_lens_arr_host,
+            paddle.assign(
+                kv_lens_arr_host, output=self._kv_lens_buffer[: len(kv_lens_arr_host)]
             )
-
             if self._backend == "fa3":
                 if self.C != 1:
-                    vector_sparse_indptr_host = torch.cat(
-                        [
-                            torch.tensor([0], dtype=torch.int32),
-                            torch.cumsum(kv_lens_arr_host, dim=0, dtype=torch.int32),
+                    vector_sparse_indptr_host = paddle.concat(
+                        x=[
+                            paddle.to_tensor(data=[0], dtype="int32"),
+                            paddle.cumsum(x=kv_lens_arr_host, axis=0, dtype="int32"),
                         ],
-                        dim=0,
+                        axis=0,
                     )
-                    self._vector_sparse_indptr_buffer[
-                        : len(vector_sparse_indptr_host)
-                    ].copy_(vector_sparse_indptr_host, non_blocking=non_blocking)
+                    paddle.assign(
+                        vector_sparse_indptr_host,
+                        output=self._vector_sparse_indptr_buffer[
+                            : len(vector_sparse_indptr_host)
+                        ],
+                    )
                     kv_indptr_host = vector_sparse_indptr_host
-
             self._plan_info = self._cached_module.plan(
                 self._float_workspace_buffer,
                 self._int_workspace_buffer,
@@ -453,17 +419,16 @@ class BlockSparseAttentionWrapper:
                 qo_indptr_host,
                 kv_indptr_host,
                 kv_lens_arr_host,
-                M,  # total_num_rows
-                num_blocks_row,  # batch_size
+                M,
+                num_blocks_row,
                 num_qo_heads,
                 num_kv_heads,
-                self.C,  # page_size
-                False,  # is_cuda_graph_enabled,
+                self.C,
+                False,
                 head_dim,
                 head_dim,
                 causal,
             )
-
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
         self._logits_soft_cap = logits_soft_cap
@@ -475,20 +440,20 @@ class BlockSparseAttentionWrapper:
 
     def forward(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        scale_q: Optional[torch.Tensor] = None,
-        scale_k: Optional[torch.Tensor] = None,
-        scale_v: Optional[torch.Tensor] = None,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        scale_q: Optional[paddle.Tensor] = None,
+        scale_k: Optional[paddle.Tensor] = None,
+        scale_v: Optional[paddle.Tensor] = None,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
         logits_soft_cap: Optional[float] = None,
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-    ) -> torch.Tensor:
-        r"""Warning: This method is deprecated, please use :meth:`run` instead."""
+    ) -> paddle.Tensor:
+        """Warning: This method is deprecated, please use :meth:`run` instead."""
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
         self._logits_soft_cap = logits_soft_cap
@@ -499,18 +464,18 @@ class BlockSparseAttentionWrapper:
 
     def run(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        scale_q: Optional[torch.Tensor] = None,
-        scale_k: Optional[torch.Tensor] = None,
-        scale_v: Optional[torch.Tensor] = None,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        scale_q: Optional[paddle.Tensor] = None,
+        scale_k: Optional[paddle.Tensor] = None,
+        scale_v: Optional[paddle.Tensor] = None,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: bool = False,
         enable_pdl: Optional[bool] = None,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        r"""Compute block-sparse attention between Q/K/V tensors.
+    ) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
+        """Compute block-sparse attention between Q/K/V tensors.
 
         Parameters
         ----------
@@ -549,8 +514,7 @@ class BlockSparseAttentionWrapper:
             * The logsumexp of attention output, shape: ``[M, num_qo_heads]``.
         """
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(q.device)
-
+            enable_pdl = device_support_pdl(q.place)
         pos_encoding_mode = self._pos_encoding_mode
         logits_soft_cap = self._logits_soft_cap
         sm_scale = self._sm_scale
@@ -560,69 +524,59 @@ class BlockSparseAttentionWrapper:
         if logits_soft_cap is None:
             logits_soft_cap = 0.0
         if sm_scale is None:
-            sm_scale = 1.0 / math.sqrt(q.size(-1))
+            sm_scale = 1.0 / math.sqrt(q.shape[-1])
         if rope_scale is None:
             rope_scale = 1.0
         if rope_theta is None:
-            rope_theta = 1e4
-        k = k.reshape(-1, self.C, *k.shape[-2:])
-        v = v.reshape(-1, self.C, *v.shape[-2:])
-
-        stride_block = k.stride(0)
-        stride_n = k.stride(1)
-
+            rope_theta = 10000.0
+        k = k.reshape(-1, self.C, *tuple(k.shape)[-2:])
+        v = v.reshape(-1, self.C, *tuple(v.shape)[-2:])
+        stride_block = k.get_strides()[0]
+        stride_n = k.get_strides()[1]
         if return_lse:
             if lse is None:
-                lse = torch.empty(
-                    (q.size(0), q.size(1)), dtype=torch.float32, device=q.device
-                )
+                lse = paddle.empty(shape=(q.shape[0], q.shape[1]), dtype="float32")
             else:
                 check_shape_dtype_device(
-                    lse, (q.size(0), q.size(1)), torch.float32, q.device, "lse"
+                    lse, (q.shape[0], q.shape[1]), "float32", q.place, "lse"
                 )
-
         if out is None:
-            out = torch.empty_like(q, dtype=self._o_dtype)
+            out = paddle.empty_like(x=q, dtype=self._o_dtype)
         else:
-            check_shape_dtype_device(out, q.shape, self._o_dtype, q.device, "out")
-
+            check_shape_dtype_device(out, tuple(q.shape), self._o_dtype, q.place, "out")
         if is_float8(q):
             assert q.dtype == k.dtype == v.dtype
-            assert q.shape[-1] == k.shape[-1] == v.shape[-1]
+            assert tuple(q.shape)[-1] == tuple(k.shape)[-1] == tuple(v.shape)[-1]
             assert self._backend == "fa3" and self._use_tensor_cores
-
             if scale_q is None:
-                scale_q = torch.ones(q.shape[1], dtype=torch.float32, device=q.device)
+                scale_q = paddle.ones(shape=tuple(q.shape)[1], dtype="float32")
             if scale_k is None:
-                scale_k = torch.ones(k.shape[1], dtype=torch.float32, device=q.device)
+                scale_k = paddle.ones(shape=tuple(k.shape)[1], dtype="float32")
             if scale_v is None:
-                scale_v = torch.ones(v.shape[1], dtype=torch.float32, device=q.device)
-
+                scale_v = paddle.ones(shape=tuple(v.shape)[1], dtype="float32")
         if self._use_tensor_cores:
             if self._backend == "fa3":
                 if (
-                    self._vector_sparse_indices_buffer.numel()
-                    <= self._paged_kv_indices_buf.numel() * self.C
+                    self._vector_sparse_indices_buffer.size
+                    <= self._paged_kv_indices_buf.size * self.C
                 ):
                     raise ValueError(
                         "_vector_sparse_indices_buffer is not large enough. Please increase the size."
                     )
-
                 sparse_indices = block_sparse_indices_to_vector_sparse_offsets(
                     self._paged_kv_indices_buf,
                     self._paged_kv_indptr_buf,
-                    self._vector_sparse_indices_buffer,  # output
+                    self._vector_sparse_indices_buffer,
                     self._vector_sparse_indptr_buffer,
                     self._kv_lens_buffer,
                     stride_block // stride_n,
-                    1,  # stride_n // stride_n
-                    self.C,  # block_size
+                    1,
+                    self.C,
                 )
                 sparse_indptr = self._vector_sparse_indptr_buffer
             else:
                 sparse_indices = self._paged_kv_indices_buf
                 sparse_indptr = self._paged_kv_indptr_buf
-
             self._cached_module.paged_run(
                 self._float_workspace_buffer,
                 self._int_workspace_buffer,
@@ -638,15 +592,14 @@ class BlockSparseAttentionWrapper:
                 lse,
                 self._mask_mode,
                 TensorLayout[self._kv_layout].value,
-                -1,  # window_left
+                -1,
                 enable_pdl,
-                # ADDITIONAL_FUNC_PARAMS
                 self._packed_mask_buf,
                 self._mask_indptr_buf,
-                _get_cache_alibi_slopes_buf(q.shape[1], self.device),
-                None,  # maybe_prefix_len_ptr
-                None,  # maybe_token_pos_in_items_ptr
-                None,  # maybe_max_item_len_ptr
+                _get_cache_alibi_slopes_buf(tuple(q.shape)[1], self.device),
+                None,
+                None,
+                None,
                 logits_soft_cap,
                 sm_scale,
                 scale_q,
@@ -654,7 +607,7 @@ class BlockSparseAttentionWrapper:
                 scale_v,
                 rope_scale,
                 rope_theta,
-                0,  # token_pos_in_items_len
+                0,
             )
         else:
             self._cached_module.run(
@@ -670,25 +623,23 @@ class BlockSparseAttentionWrapper:
                 out,
                 lse,
                 TensorLayout[self._kv_layout].value,
-                -1,  # window_left
+                -1,
                 enable_pdl,
-                # ADDITIONAL_FUNC_PARAMS
-                _get_cache_alibi_slopes_buf(q.shape[1], self.device),
+                _get_cache_alibi_slopes_buf(tuple(q.shape)[1], self.device),
                 logits_soft_cap,
                 sm_scale,
                 rope_scale,
                 rope_theta,
             )
-
         return (out, lse) if return_lse else out
 
     def end_forward(self) -> None:
-        r"""Warning: This method is deprecated and has no effect."""
+        """Warning: This method is deprecated and has no effect."""
         pass
 
 
 class VariableBlockSparseAttentionWrapper:
-    r"""Wrapper class for attention computation with a block-sparse matrix as attention mask.
+    """Wrapper class for attention computation with a block-sparse matrix as attention mask.
     This API supports variable block sizes provided by ``block_row_sz`` and ``block_col_sz``.
     Besides, each ``kv_head_idx`` can specify its own sparse patterns without using the same mask.
 
@@ -721,11 +672,9 @@ class VariableBlockSparseAttentionWrapper:
     """
 
     def __init__(
-        self,
-        float_workspace_buffer: torch.Tensor,
-        backend: str = "auto",
+        self, float_workspace_buffer: paddle.Tensor, backend: str = "auto"
     ) -> None:
-        r"""Constructs of :class:`VariableBlockSparseAttentionWrapper`.
+        """Constructs of :class:`VariableBlockSparseAttentionWrapper`.
 
         Parameters
         ----------
@@ -739,43 +688,37 @@ class VariableBlockSparseAttentionWrapper:
             device architecture and kernel availability.
         """
         self._float_workspace_buffer = float_workspace_buffer
-        self.device = float_workspace_buffer.device
-        self._int_workspace_buffer = torch.empty(
-            (8 * 1024 * 1024,), dtype=torch.uint8, device=self.device
+        self.device = float_workspace_buffer.place
+        self._int_workspace_buffer = paddle.empty(
+            shape=(8 * 1024 * 1024,), dtype="uint8"
         )
         if backend in ["fa3", "auto"]:
-            self._vector_sparse_indices_buffer = torch.empty(
-                (128 * 1024 * 1024,), dtype=torch.int32, device=self.device
+            self._vector_sparse_indices_buffer = paddle.empty(
+                shape=(128 * 1024 * 1024,), dtype="int32"
             )
-            self._vector_sparse_indptr_buffer = torch.empty(
-                (32768,), dtype=torch.int32, device=self.device
+            self._vector_sparse_indptr_buffer = paddle.empty(
+                shape=(32768,), dtype="int32"
             )
-
-        self._kv_lens_buffer = torch.empty(
-            (32768,), dtype=torch.int32, device=self.device
-        )
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
-            dtype=torch.uint8,
-            pin_memory=True,
-            device="cpu",
-        )
+        self._kv_lens_buffer = paddle.empty(shape=(32768,), dtype="int32")
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape), dtype="uint8"
+        ).pin_memory()
         self._use_cuda_graph = False
         self._kv_layout = "NHD"
-        self._qo_indptr: Optional[torch.Tensor] = None
-        self._paged_kv_indptr_buf: Optional[torch.Tensor] = None
-        self._paged_kv_indices_buf: Optional[torch.Tensor] = None
-        self._paged_kv_last_page_len: Optional[torch.Tensor] = None
+        self._qo_indptr: Optional[paddle.Tensor] = None
+        self._paged_kv_indptr_buf: Optional[paddle.Tensor] = None
+        self._paged_kv_indices_buf: Optional[paddle.Tensor] = None
+        self._paged_kv_last_page_len: Optional[paddle.Tensor] = None
         self._backend = backend
 
     def reset_workspace_buffer(
         self,
-        float_workspace_buffer: torch.Tensor,
-        int_workspace_buffer: torch.Tensor,
-        vector_sparse_indices_buffer: Optional[torch.Tensor] = None,
-        vector_sparse_indptr_buffer: Optional[torch.Tensor] = None,
+        float_workspace_buffer: paddle.Tensor,
+        int_workspace_buffer: paddle.Tensor,
+        vector_sparse_indices_buffer: Optional[paddle.Tensor] = None,
+        vector_sparse_indptr_buffer: Optional[paddle.Tensor] = None,
     ) -> None:
-        r"""Reset the workspace buffer.
+        """Reset the workspace buffer.
 
         Parameters
         ----------
@@ -789,13 +732,10 @@ class VariableBlockSparseAttentionWrapper:
         """
         self._float_workspace_buffer = float_workspace_buffer
         self._int_workspace_buffer = int_workspace_buffer
-        self._pin_memory_int_workspace_buffer = torch.empty(
-            self._int_workspace_buffer.shape,
+        self._pin_memory_int_workspace_buffer = paddle.empty(
+            shape=tuple(self._int_workspace_buffer.shape),
             dtype=self._int_workspace_buffer.dtype,
-            pin_memory=True,
-        )
-
-        # Enable user-defined size
+        ).pin_memory()
         if vector_sparse_indices_buffer is not None:
             self._vector_sparse_indices_buffer = vector_sparse_indices_buffer
         if vector_sparse_indptr_buffer is not None:
@@ -803,9 +743,9 @@ class VariableBlockSparseAttentionWrapper:
 
     def plan(
         self,
-        block_mask_map: torch.Tensor,
-        block_row_sz: torch.Tensor,
-        block_col_sz: torch.Tensor,
+        block_mask_map: paddle.Tensor,
+        block_row_sz: paddle.Tensor,
+        block_col_sz: paddle.Tensor,
         num_qo_heads: int,
         num_kv_heads: int,
         head_dim: int,
@@ -817,10 +757,10 @@ class VariableBlockSparseAttentionWrapper:
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
         non_blocking: bool = True,
-        q_data_type: Union[str, torch.dtype] = "float16",
-        kv_data_type: Optional[Union[str, torch.dtype]] = None,
+        q_data_type: Union[str, paddle.dtype] = "float16",
+        kv_data_type: Optional[Union[str, paddle.dtype]] = None,
     ) -> None:
-        r"""Create auxiliary data structures for block sparse attention.
+        """Create auxiliary data structures for block sparse attention.
 
         Parameters
         ----------
@@ -850,7 +790,7 @@ class VariableBlockSparseAttentionWrapper:
             The attention logits soft capping value (used in Gemini, Grok and Gemma-2, etc.), if not
             provided, will be set to ``0``. If greater than 0, the logits will be capped according to
             formula:
-            :math:`\texttt{logits_soft_cap} \times \mathrm{tanh}(x / \texttt{logits_soft_cap})`,
+            :math:`\\texttt{logits_soft_cap} \\times \\mathrm{tanh}(x / \\texttt{logits_soft_cap})`,
             where :math:`x` is the input logits.
         sm_scale : Optional[float]
             The scale used in softmax, if not provided, will be set to
@@ -877,39 +817,25 @@ class VariableBlockSparseAttentionWrapper:
             kv_data_type = q_data_type
         kv_data_type = canonicalize_torch_dtype(kv_data_type)
         self._o_dtype = q_data_type
-
         if logits_soft_cap is None:
             logits_soft_cap = 0.0
-
-        # num_blocks are constant across kv_heads
-        num_blocks_row = block_row_sz.shape[-1]
-        num_blocks_col = block_col_sz.shape[-1]
-
-        # q layout: [seq_len, num_kv_heads, gqa_group_size, head_dim]
-        # padded into: [seq_len * num_kv_heads, 1, gqa_group_size, head_dim]
-        qo_indptr = torch.cat(
-            [
-                torch.zeros(1, dtype=torch.int32, device=block_row_sz.device),
-                torch.cumsum(block_row_sz.flatten(), dim=0, dtype=torch.int32),
+        num_blocks_row = tuple(block_row_sz.shape)[-1]
+        num_blocks_col = tuple(block_col_sz.shape)[-1]
+        qo_indptr = paddle.concat(
+            x=[
+                paddle.zeros(shape=[1], dtype="int32"),
+                paddle.cumsum(x=block_row_sz.flatten(), axis=0, dtype="int32"),
             ],
-            dim=0,
+            axis=0,
         )
-        qo_indptr_host = qo_indptr.to("cpu", non_blocking=non_blocking)
-        last_block_len = torch.full(
-            (num_blocks_row * num_kv_heads,),
-            1,
-            dtype=torch.int32,
-            device=block_mask_map.device,
-        )  # We use page_size == 1 for variable length support
+        qo_indptr_host = qo_indptr.to("cpu", blocking=not non_blocking)
+        last_block_len = paddle.full(
+            shape=(num_blocks_row * num_kv_heads,), fill_value=1, dtype="int32"
+        )
 
-        # HND kv layout: [num_kv_heads, num_blocks, block_size, head_dim]
-        # padded into: [num_kv_heads * num_blocks, block_size, 1, head_dim]
-        # for customized attention mask for each kv_head
-        # NOTE(Yilong): This could be perf bottleneck. Consider Triton implementation.
         def _block_mask_map_to_expanded_indices(
-            block_mask_map: torch.Tensor,  # [H, R, C] bool / {0,1}
-            block_col_sz: torch.Tensor,  # [H, C]     int
-        ) -> Tuple[torch.Tensor, torch.Tensor]:
+            block_mask_map: paddle.Tensor, block_col_sz: paddle.Tensor
+        ) -> Tuple[paddle.Tensor, paddle.Tensor]:
             """
             Args:
                 block_mask_map:  bool/int  [num_kv_heads, num_blocks_row, num_blocks_col]
@@ -918,37 +844,30 @@ class VariableBlockSparseAttentionWrapper:
                 kv_indptr:  [H*R + 1]  int32  —  CSR indptr
                 kv_indices: [nnz]      int32  —  token indices per (head, row)
             """
-            device = block_mask_map.device
-            dtype_i = torch.int32
-
-            # 1) Calculate the total length of each row (head, row)
-            row_lengths = (block_mask_map * block_col_sz[:, None, :]).sum(-1)  # [H,R]
-            kv_indptr = torch.cat(
-                [
-                    torch.zeros(1, dtype=dtype_i, device=device),
-                    torch.cumsum(row_lengths.flatten(), 0),
+            device = block_mask_map.place
+            dtype_i = "int32"
+            row_lengths = (block_mask_map * block_col_sz[:, None, :]).sum(axis=-1)
+            kv_indptr = paddle.concat(
+                x=[
+                    paddle.zeros(shape=[1], dtype=dtype_i),
+                    paddle.cumsum(x=row_lengths.flatten(), axis=0),
                 ],
-                dim=0,
+                axis=0,
             )
-
-            # 2) Calculate the offset of each column block within its head
             col_offset = (
-                torch.cumsum(block_col_sz.to(dtype_i), 1) - block_col_sz
-            )  # [H,C]
-            head_len = block_col_sz.sum(1, dtype=dtype_i)
-            head_offset = torch.cumsum(head_len, 0) - head_len
-
-            # 3) Find all selected (h,r,c)
+                paddle.cumsum(x=block_col_sz.to(dtype_i), axis=1) - block_col_sz
+            )
+            head_len = block_col_sz.sum(axis=1, dtype=dtype_i)
+            head_offset = paddle.cumsum(x=head_len, axis=0) - head_len
             h_idx, r_idx, c_idx = block_mask_map.nonzero(as_tuple=True)
-            lengths = block_col_sz[h_idx, c_idx].to(dtype_i)  # [N]
-            base = head_offset[h_idx] + col_offset[h_idx, c_idx]  # [N]
-
-            # 4) Expand variable-length column blocks into token-level indices
-            cum = torch.cumsum(lengths, 0)
-            starts = torch.repeat_interleave(cum - lengths, lengths)  # [total]
-            offsets_within = torch.arange(cum[-1], device=device) - starts
-            kv_indices = torch.repeat_interleave(base, lengths) + offsets_within
-
+            lengths = block_col_sz[h_idx, c_idx].to(dtype_i)
+            base = head_offset[h_idx] + col_offset[h_idx, c_idx]
+            cum = paddle.cumsum(x=lengths, axis=0)
+            starts = paddle.repeat_interleave(x=cum - lengths, repeats=lengths)
+            offsets_within = paddle.arange(end=cum[-1]) - starts
+            kv_indices = (
+                paddle.repeat_interleave(x=base, repeats=lengths) + offsets_within
+            )
             return kv_indptr.to(dtype=dtype_i, device=device), kv_indices.to(
                 dtype=dtype_i, device=device
             )
@@ -956,72 +875,64 @@ class VariableBlockSparseAttentionWrapper:
         kv_indptr, kv_indices = _block_mask_map_to_expanded_indices(
             block_mask_map, block_col_sz
         )
-        kv_indptr_host = kv_indptr.to("cpu", non_blocking=non_blocking)
-        kv_indices_host = kv_indices.to("cpu", non_blocking=non_blocking)
-
-        self._qo_indptr = qo_indptr.to(self.device, non_blocking=non_blocking)
-        self._paged_kv_indptr_buf = kv_indptr.to(self.device, non_blocking=non_blocking)
+        kv_indptr_host = kv_indptr.to("cpu", blocking=not non_blocking)
+        kv_indices_host = kv_indices.to("cpu", blocking=not non_blocking)
+        self._qo_indptr = qo_indptr.to(self.device, blocking=not non_blocking)
+        self._paged_kv_indptr_buf = kv_indptr.to(self.device, blocking=not non_blocking)
         self._paged_kv_indices_buf = kv_indices.to(
-            self.device, non_blocking=non_blocking
+            self.device, blocking=not non_blocking
         )
         self._paged_kv_last_page_len = last_block_len.to(
-            self.device, non_blocking=non_blocking
+            self.device, blocking=not non_blocking
         )
-        torch.cuda.synchronize()  # for non-blocking copy
+        paddle.device.synchronize()
         self._mask_mode = MaskMode.CAUSAL.value if causal else MaskMode.NON_CAUSAL.value
-
-        # Sanity check
-        assert num_qo_heads % num_kv_heads == 0, (
-            "num_qo_heads must be a multiple of num_kv_heads"
-        )
-        assert num_blocks_row * num_kv_heads + 1 == kv_indptr_host.shape[0]
-        assert kv_indptr_host[-1].item() == kv_indices_host.shape[0], (
-            f"{kv_indptr_host[-1].item()} != {kv_indices_host.shape[0]}"
-        )
-        assert num_kv_heads == block_mask_map.shape[0]
-        assert num_kv_heads == block_row_sz.shape[0]
-        assert num_kv_heads == block_col_sz.shape[0]
-        assert num_blocks_row == block_mask_map.shape[1]
-        assert num_blocks_col == block_mask_map.shape[2]
-
+        assert (
+            num_qo_heads % num_kv_heads == 0
+        ), "num_qo_heads must be a multiple of num_kv_heads"
+        assert num_blocks_row * num_kv_heads + 1 == tuple(kv_indptr_host.shape)[0]
+        assert (
+            kv_indptr_host[-1].item() == tuple(kv_indices_host.shape)[0]
+        ), f"{kv_indptr_host[-1].item()} != {tuple(kv_indices_host.shape)[0]}"
+        assert num_kv_heads == tuple(block_mask_map.shape)[0]
+        assert num_kv_heads == tuple(block_row_sz.shape)[0]
+        assert num_kv_heads == tuple(block_col_sz.shape)[0]
+        assert num_blocks_row == tuple(block_mask_map.shape)[1]
+        assert num_blocks_col == tuple(block_mask_map.shape)[2]
         if self._backend == "auto":
             self._backend = determine_attention_backend(
                 self.device,
                 PosEncodingMode[pos_encoding_mode].value,
                 use_fp16_qk_reduction,
-                self._mask_mode == MaskMode.CUSTOM.value,  # use_custom_mask
+                self._mask_mode == MaskMode.CUSTOM.value,
                 q_data_type,
                 kv_data_type,
             )
-
         get_module_args = (
             q_data_type,
             kv_data_type,
             self._o_dtype,
             kv_indptr_host.dtype,
-            head_dim,  # head_dim_qk
-            head_dim,  # head_dim_vo
+            head_dim,
+            head_dim,
             PosEncodingMode[pos_encoding_mode].value,
-            False,  # use_sliding_window
-            logits_soft_cap > 0,  # use_logits_soft_cap
+            False,
+            logits_soft_cap > 0,
             use_fp16_qk_reduction,
         )
         self._cached_module = get_batch_prefill_module(self._backend, *get_module_args)
-
-        kv_lens_arr_host = kv_indptr_host[1:] - kv_indptr_host[:-1]  # page_size == 1
-        self._kv_lens_buffer[: len(kv_lens_arr_host)].copy_(
-            kv_lens_arr_host,
+        kv_lens_arr_host = kv_indptr_host[1:] - kv_indptr_host[:-1]
+        paddle.assign(
+            kv_lens_arr_host, output=self._kv_lens_buffer[: len(kv_lens_arr_host)]
         )
-
         if self._backend == "fa3":
-            if self._vector_sparse_indptr_buffer.numel() <= kv_indptr.numel():
+            if self._vector_sparse_indptr_buffer.size <= kv_indptr.size:
                 raise ValueError(
                     "_vector_sparse_indptr_buffer is not large enough. Please increase the buffer size."
                 )
-            self._vector_sparse_indptr_buffer[: len(kv_indptr)].copy_(
-                kv_indptr, non_blocking=non_blocking
+            paddle.assign(
+                kv_indptr, output=self._vector_sparse_indptr_buffer[: len(kv_indptr)]
             )
-
         self._plan_info = self._cached_module.plan(
             self._float_workspace_buffer,
             self._int_workspace_buffer,
@@ -1029,17 +940,16 @@ class VariableBlockSparseAttentionWrapper:
             qo_indptr_host,
             kv_indptr_host,
             kv_lens_arr_host,
-            qo_indptr_host[-1].item(),  # total_num_rows
-            num_blocks_row * num_kv_heads,  # batch_size
-            num_qo_heads // num_kv_heads,  # num_qo_heads (gqa_group_size)
-            1,  # num_kv_heads,
-            1,  # page_size
-            False,  # is_cuda_graph_enabled,
+            qo_indptr_host[-1].item(),
+            num_blocks_row * num_kv_heads,
+            num_qo_heads // num_kv_heads,
+            1,
+            1,
+            False,
             head_dim,
             head_dim,
             causal,
         )
-
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
         self._logits_soft_cap = logits_soft_cap
@@ -1051,17 +961,17 @@ class VariableBlockSparseAttentionWrapper:
 
     def forward(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
         pos_encoding_mode: str = "NONE",
         use_fp16_qk_reduction: bool = False,
         logits_soft_cap: Optional[float] = None,
         sm_scale: Optional[float] = None,
         rope_scale: Optional[float] = None,
         rope_theta: Optional[float] = None,
-    ) -> torch.Tensor:
-        r"""Warning: This method is deprecated, please use :meth:`run` instead."""
+    ) -> paddle.Tensor:
+        """Warning: This method is deprecated, please use :meth:`run` instead."""
         self._pos_encoding_mode = pos_encoding_mode
         self._use_fp16_qk_reduction = use_fp16_qk_reduction
         self._logits_soft_cap = logits_soft_cap
@@ -1072,15 +982,15 @@ class VariableBlockSparseAttentionWrapper:
 
     def run(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        out: Optional[torch.Tensor] = None,
-        lse: Optional[torch.Tensor] = None,
+        q: paddle.Tensor,
+        k: paddle.Tensor,
+        v: paddle.Tensor,
+        out: Optional[paddle.Tensor] = None,
+        lse: Optional[paddle.Tensor] = None,
         return_lse: bool = False,
         enable_pdl: Optional[bool] = None,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        r"""Compute block-sparse attention between Q/K/V tensors.
+    ) -> Union[paddle.Tensor, Tuple[paddle.Tensor, paddle.Tensor]]:
+        """Compute block-sparse attention between Q/K/V tensors.
 
         Parameters
         ----------
@@ -1109,12 +1019,8 @@ class VariableBlockSparseAttentionWrapper:
             * The attention output, shape: ``[M, num_qo_heads, head_dim]``.
             * The logsumexp of attention output, shape: ``[M, num_qo_heads]``.
         """
-        # NOTE(Zihao): defer import of einops
-        import einops
-
         if enable_pdl is None:
-            enable_pdl = device_support_pdl(q.device)
-
+            enable_pdl = device_support_pdl(q.place)
         pos_encoding_mode = self._pos_encoding_mode
         logits_soft_cap = self._logits_soft_cap
         sm_scale = self._sm_scale
@@ -1124,72 +1030,57 @@ class VariableBlockSparseAttentionWrapper:
         if logits_soft_cap is None:
             logits_soft_cap = 0.0
         if sm_scale is None:
-            sm_scale = 1.0 / math.sqrt(q.size(-1))
+            sm_scale = 1.0 / math.sqrt(q.shape[-1])
         if rope_scale is None:
             rope_scale = 1.0
         if rope_theta is None:
-            rope_theta = 1e4
-
-        # reshape to pad num_kv_heads into seq_len
-        # input [num_qo_heads, qo_len, head_dim]
-        # kernel layout is NHD -> [qo_len * num_kv_heads, gqa_group_size, head_dim]
+            rope_theta = 10000.0
         q = einops.rearrange(
             q,
             "(num_kv_heads gqa_group_size) qo_len head_dim -> (num_kv_heads qo_len) gqa_group_size head_dim",
             num_kv_heads=self._num_kv_heads,
         ).contiguous()
-        # HND -> [kv_len * num_kv_heads (num_pages), 1 (page_size), 1 (new_num_kv_heads), head_dim]
         k = einops.rearrange(
-            k,
-            "num_kv_heads kv_len head_dim -> (num_kv_heads kv_len) 1 1 head_dim",
+            k, "num_kv_heads kv_len head_dim -> (num_kv_heads kv_len) 1 1 head_dim"
         ).contiguous()
         v = einops.rearrange(
-            v,
-            "num_kv_heads kv_len head_dim -> (num_kv_heads kv_len) 1 1 head_dim",
+            v, "num_kv_heads kv_len head_dim -> (num_kv_heads kv_len) 1 1 head_dim"
         ).contiguous()
-
-        stride_block = k.stride(0)
-        stride_n = k.stride(1)
-
+        stride_block = k.get_strides()[0]
+        stride_n = k.get_strides()[1]
         if return_lse:
             if lse is None:
-                lse = torch.empty(
-                    (q.size(0), q.size(1)), dtype=torch.float32, device=q.device
-                )
+                lse = paddle.empty(shape=(q.shape[0], q.shape[1]), dtype="float32")
             else:
                 check_shape_dtype_device(
-                    lse, (q.size(0), q.size(1)), torch.float32, q.device, "lse"
+                    lse, (q.shape[0], q.shape[1]), "float32", q.place, "lse"
                 )
-
         if out is None:
-            out = torch.empty_like(q, dtype=self._o_dtype)
+            out = paddle.empty_like(x=q, dtype=self._o_dtype)
         else:
-            check_shape_dtype_device(out, q.shape, self._o_dtype, q.device, "out")
-
+            check_shape_dtype_device(out, tuple(q.shape), self._o_dtype, q.place, "out")
         if self._backend == "fa3":
             if (
-                self._vector_sparse_indices_buffer.numel()
-                <= self._paged_kv_indices_buf.numel()
+                self._vector_sparse_indices_buffer.size
+                <= self._paged_kv_indices_buf.size
             ):
                 raise ValueError(
                     "_vector_sparse_indices_buffer is not large enough. Please increase the buffer size."
                 )
-
             sparse_indices = block_sparse_indices_to_vector_sparse_offsets(
                 self._paged_kv_indices_buf,
                 self._paged_kv_indptr_buf,
-                self._vector_sparse_indices_buffer,  # output
+                self._vector_sparse_indices_buffer,
                 self._vector_sparse_indptr_buffer,
                 self._kv_lens_buffer,
                 stride_block // stride_n,
-                1,  # stride_n // stride_n
-                1,  # block_size
+                1,
+                1,
             )
             sparse_indptr = self._vector_sparse_indptr_buffer
         else:
             sparse_indices = self._paged_kv_indices_buf
             sparse_indptr = self._paged_kv_indptr_buf
-
         self._cached_module.paged_run(
             self._float_workspace_buffer,
             self._int_workspace_buffer,
@@ -1205,38 +1096,32 @@ class VariableBlockSparseAttentionWrapper:
             lse,
             self._mask_mode,
             TensorLayout[self._kv_layout].value,
-            -1,  # window_left
+            -1,
             enable_pdl,
-            # ADDITIONAL_FUNC_PARAMS
-            # Not supported yet
-            None,  # packed_mask_buf
-            None,  # mask_indptr_buf
-            None,  # alibi_slopes_buf
+            None,
+            None,
+            None,
             None,
             None,
             None,
             logits_soft_cap,
             sm_scale,
-            None,  # scale_q
-            None,  # scale_k
-            None,  # scale_v
+            None,
+            None,
+            None,
             rope_scale,
             rope_theta,
-            0,  # token_pos_in_items_len
+            0,
         )
-
-        # [qo_len * num_kv_heads, gqa_group_size, head_dim] -> HND
         out = einops.rearrange(
             out,
             "(num_kv_heads qo_len) gqa_group_size head_dim -> (num_kv_heads gqa_group_size) qo_len head_dim",
             num_kv_heads=self._num_kv_heads,
         ).contiguous()
-
         if return_lse:
             lse = einops.rearrange(
                 lse,
                 "(num_kv_heads qo_len) gqa_group_size -> (num_kv_heads gqa_group_size) qo_len",
                 num_kv_heads=self._num_kv_heads,
             ).contiguous()
-
         return (out, lse) if return_lse else out

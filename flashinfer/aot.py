@@ -1,36 +1,29 @@
+import sys
+
+sys.path.append("/home/flashinfer_paddle")
 import argparse
 import os
 import shutil
 from itertools import product
 from pathlib import Path
-from typing import List, Tuple, Iterator
+from typing import Iterator, List, Tuple
 
-import torch
-import torch.version
-from torch.utils.cpp_extension import _get_cuda_arch_flags
+import paddle
+from paddle_utils import *
 
 from .activation import act_func_def_str, gen_act_and_mul_module
 from .cascade import gen_cascade_module
-from .fp4_quantization import (
-    gen_fp4_quantization_sm100_module,
-    gen_fp4_quantization_sm90_module,
-)
-from .fused_moe import (
-    gen_cutlass_fused_moe_sm100_module,
-    gen_cutlass_fused_moe_sm90_module,
-)
+from .fp4_quantization import (gen_fp4_quantization_sm90_module,
+                               gen_fp4_quantization_sm100_module)
+from .fused_moe import (gen_cutlass_fused_moe_sm90_module,
+                        gen_cutlass_fused_moe_sm100_module)
 from .gemm import gen_gemm_module, gen_gemm_sm90_module, gen_gemm_sm100_module
 from .jit import JitSpec, build_jit_specs
 from .jit import env as jit_env
-from .jit import (
-    gen_batch_decode_module,
-    gen_batch_mla_module,
-    gen_batch_prefill_module,
-    gen_fmha_cutlass_sm100a_module,
-    gen_jit_spec,
-    gen_single_decode_module,
-    gen_single_prefill_module,
-)
+from .jit import (gen_batch_decode_module, gen_batch_mla_module,
+                  gen_batch_prefill_module, gen_fmha_cutlass_sm100a_module,
+                  gen_jit_spec, gen_single_decode_module,
+                  gen_single_prefill_module)
 from .mla import gen_mla_module
 from .norm import gen_norm_module
 from .page import gen_page_module
@@ -42,18 +35,17 @@ from .utils import version_at_least
 
 
 def gen_fa2(
-    dtype_qo: torch.dtype,
-    dtype_kv: torch.dtype,
+    dtype_qo: paddle.dtype,
+    dtype_kv: paddle.dtype,
     head_dim_qk: int,
     head_dim_vo: int,
     use_sliding_window: bool,
     use_logits_soft_cap: bool,
 ) -> Iterator[JitSpec]:
-    if dtype_qo.itemsize == dtype_kv.itemsize and dtype_qo != dtype_kv:
+    if dtype_qo.element_size() == dtype_kv.element_size() and dtype_qo != dtype_kv:
         return
-    if dtype_qo.itemsize == 1:
-        return  # fp8 tensor cores not supported in fa2
-
+    if dtype_qo.element_size() == 1:
+        return
     yield gen_single_prefill_module(
         backend="fa2",
         dtype_q=dtype_qo,
@@ -66,13 +58,12 @@ def gen_fa2(
         use_logits_soft_cap=use_logits_soft_cap,
         use_fp16_qk_reduction=False,
     )
-
     yield gen_batch_prefill_module(
         backend="fa2",
         dtype_q=dtype_qo,
         dtype_kv=dtype_kv,
         dtype_o=dtype_qo,
-        dtype_idx=torch.int32,
+        dtype_idx="int32",
         head_dim_qk=head_dim_qk,
         head_dim_vo=head_dim_vo,
         pos_encoding_mode=0,
@@ -80,7 +71,6 @@ def gen_fa2(
         use_logits_soft_cap=use_logits_soft_cap,
         use_fp16_qk_reduction=False,
     )
-
     yield gen_single_decode_module(
         dtype_q=dtype_qo,
         dtype_kv=dtype_kv,
@@ -91,12 +81,11 @@ def gen_fa2(
         use_sliding_window=use_sliding_window,
         use_logits_soft_cap=use_logits_soft_cap,
     )
-
     yield gen_batch_decode_module(
         dtype_q=dtype_qo,
         dtype_kv=dtype_kv,
         dtype_o=dtype_qo,
-        dtype_idx=torch.int32,
+        dtype_idx="int32",
         head_dim_qk=head_dim_qk,
         head_dim_vo=head_dim_vo,
         pos_encoding_mode=0,
@@ -106,30 +95,28 @@ def gen_fa2(
 
 
 def gen_fa3(
-    dtype_q: torch.dtype,
-    dtype_kv: torch.dtype,
-    dtype_o: torch.dtype,
+    dtype_q: paddle.dtype,
+    dtype_kv: paddle.dtype,
+    dtype_o: paddle.dtype,
     head_dim_qk: int,
     head_dim_vo: int,
     use_sliding_window: bool,
     use_logits_soft_cap: bool,
 ) -> Iterator[JitSpec]:
     if dtype_q != dtype_kv:
-        return  # fa3 template do not support mixed precision
-    if dtype_q.itemsize == 2:
+        return
+    if dtype_q.element_size() == 2:
         if dtype_q != dtype_o:
-            return  # for fp16, dtype_o must be the same as dtype_q/dtype_kv
-
-    if dtype_kv.itemsize == 1:
+            return
+    if dtype_kv.element_size() == 1:
         if head_dim_qk == 192 or head_dim_qk == 64:
-            return  # (192, 128) & (64, 64) not supported for fp8 yet.
-
+            return
     yield gen_batch_prefill_module(
         backend="fa3",
         dtype_q=dtype_q,
         dtype_kv=dtype_kv,
         dtype_o=dtype_o,
-        dtype_idx=torch.int32,
+        dtype_idx="int32",
         head_dim_qk=head_dim_qk,
         head_dim_vo=head_dim_vo,
         pos_encoding_mode=0,
@@ -140,8 +127,8 @@ def gen_fa3(
 
 
 def gen_attention(
-    f16_dtype_: List[torch.dtype],
-    f8_dtype_: List[torch.dtype],
+    f16_dtype_: List[paddle.dtype],
+    f8_dtype_: List[paddle.dtype],
     fa2_head_dim_: List[Tuple[int, int]],
     fa3_head_dim_: List[Tuple[int, int]],
     use_sliding_window_: List[bool],
@@ -153,8 +140,6 @@ def gen_attention(
 ) -> Iterator[JitSpec]:
     head_dim_ckv = 512
     head_dim_kpe = 64
-
-    # FA2 MHA / MQA / GQA
     for (
         (head_dim_qk, head_dim_vo),
         dtype_qo,
@@ -176,8 +161,6 @@ def gen_attention(
             use_sliding_window=use_sliding_window,
             use_logits_soft_cap=use_logits_soft_cap,
         )
-
-    # FA3 MHA / MQA / GQA
     if has_sm90:
         for (
             (head_dim_qk, head_dim_vo),
@@ -201,17 +184,9 @@ def gen_attention(
                 use_sliding_window=use_sliding_window,
                 use_logits_soft_cap=use_logits_soft_cap,
             )
-
-    # Gemma
     if add_gemma:
-        for (
-            dtype_qo,
-            dtype_kv,
-            (use_sliding_window, use_logits_soft_cap),
-        ) in product(
-            f16_dtype_,
-            f16_dtype_ + f8_dtype_,
-            [(True, True)],
+        for dtype_qo, dtype_kv, (use_sliding_window, use_logits_soft_cap) in product(
+            f16_dtype_, f16_dtype_ + f8_dtype_, [(True, True)]
         ):
             yield from gen_fa2(
                 dtype_qo=dtype_qo,
@@ -226,11 +201,7 @@ def gen_attention(
                 dtype_qkv,
                 dtype_o,
                 (use_sliding_window, use_logits_soft_cap),
-            ) in product(
-                f16_dtype_ + f8_dtype_,
-                f16_dtype_,
-                [(True, True)],
-            ):
+            ) in product(f16_dtype_ + f8_dtype_, f16_dtype_, [(True, True)]):
                 yield from gen_fa3(
                     dtype_q=dtype_qkv,
                     dtype_kv=dtype_qkv,
@@ -240,8 +211,6 @@ def gen_attention(
                     use_sliding_window=use_sliding_window,
                     use_logits_soft_cap=use_logits_soft_cap,
                 )
-
-    # OAI OSS
     if add_oai_oss:
         from .jit.attention import gen_batch_prefill_attention_sink_module
 
@@ -253,30 +222,24 @@ def gen_attention(
                         dtype_q=dtype,
                         dtype_kv=dtype,
                         dtype_o=dtype,
-                        dtype_idx=torch.int32,
+                        dtype_idx="int32",
                         head_dim_qk=64,
                         head_dim_vo=64,
                         pos_encoding_mode=0,
                         use_sliding_window=use_swa,
                     )
-
-    # fmha_cutlass_sm100a
-    # NOTE: currently there's only one uri.
     if has_sm100:
         yield gen_fmha_cutlass_sm100a_module(
-            dtype_q=torch.bfloat16,
-            dtype_kv=torch.bfloat16,
-            dtype_o=torch.bfloat16,
-            dtype_idx=torch.int32,
+            dtype_q="bfloat16",
+            dtype_kv="bfloat16",
+            dtype_o="bfloat16",
+            dtype_idx="int32",
             head_dim_qk=128,
             head_dim_vo=128,
             pos_encoding_mode=0,
             use_sliding_window=False,
             use_logits_soft_cap=False,
         )
-
-    # MLA
-    # NOTE: fp8 kv not supported in MLA
     mla_backend_ = ["fa2"] + (["fa3"] if has_sm90 else [])
     for dtype_qo in f16_dtype_:
         for backend in mla_backend_:
@@ -285,20 +248,18 @@ def gen_attention(
                 dtype_q=dtype_qo,
                 dtype_kv=dtype_qo,
                 dtype_o=dtype_qo,
-                dtype_idx=torch.int32,
+                dtype_idx="int32",
                 head_dim_ckv=head_dim_ckv,
                 head_dim_kpe=head_dim_kpe,
                 use_profiler=False,
             )
-
-    # MLA SM100
     if has_sm100:
         yield gen_mla_module()
 
 
 def gen_all_modules(
-    f16_dtype_: List[torch.dtype],
-    f8_dtype_: List[torch.dtype],
+    f16_dtype_: List[paddle.dtype],
+    f8_dtype_: List[paddle.dtype],
     fa2_head_dim_: List[Tuple[int, int]],
     fa3_head_dim_: List[Tuple[int, int]],
     use_sliding_window_: List[bool],
@@ -313,7 +274,6 @@ def gen_all_modules(
     add_misc: bool,
 ) -> List[JitSpec]:
     jit_specs: List[JitSpec] = []
-
     jit_specs += list(
         gen_attention(
             f16_dtype_,
@@ -328,11 +288,9 @@ def gen_all_modules(
             add_oai_oss,
         )
     )
-
     if add_act:
         for act_name in act_func_def_str:
             jit_specs.append(gen_act_and_mul_module(act_name))
-
     if add_moe:
         jit_specs.append(gen_gemm_module())
         if has_sm90:
@@ -343,7 +301,6 @@ def gen_all_modules(
             jit_specs.append(gen_fp4_quantization_sm100_module())
             jit_specs.append(gen_cutlass_fused_moe_sm100_module())
             jit_specs.append(gen_gemm_sm100_module())
-
     if add_comm:
         from .comm import gen_trtllm_comm_module, gen_vllm_comm_module
         from .comm.nvshmem import gen_nvshmem_module
@@ -352,7 +309,6 @@ def gen_all_modules(
         if has_sm100:
             jit_specs.append(gen_trtllm_comm_module())
         jit_specs.append(gen_vllm_comm_module())
-
     if add_misc:
         jit_specs += [
             gen_cascade_module(),
@@ -364,8 +320,6 @@ def gen_all_modules(
         ]
         if has_sm90:
             jit_specs.append(get_trtllm_utils_spec())
-
-    # dedup
     names = set()
     ret: List[JitSpec] = []
     for jit_spec in jit_specs:
@@ -375,10 +329,7 @@ def gen_all_modules(
     return ret
 
 
-def copy_built_kernels(
-    jit_specs: List[JitSpec],
-    out_dir: Path,
-) -> None:
+def copy_built_kernels(jit_specs: List[JitSpec], out_dir: Path) -> None:
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=False)
@@ -407,16 +358,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Ahead-of-Time (AOT) build all modules"
     )
-    parser.add_argument(
-        "--out-dir",
-        type=Path,
-        help="Output directory",
-    )
-    parser.add_argument(
-        "--build-dir",
-        type=Path,
-        help="Build directory",
-    )
+    parser.add_argument("--out-dir", type=Path, help="Output directory")
+    parser.add_argument("--build-dir", type=Path, help="Build directory")
     parser.add_argument(
         "--fa2-head-dim",
         nargs="*",
@@ -440,15 +383,9 @@ def main():
         help="8-bit data type",
     )
     parser.add_argument(
-        "--use-sliding-window",
-        nargs="*",
-        help="Use sliding window attention",
+        "--use-sliding-window", nargs="*", help="Use sliding window attention"
     )
-    parser.add_argument(
-        "--use-logits-soft-cap",
-        nargs="*",
-        help="Use logits soft cap",
-    )
+    parser.add_argument("--use-logits-soft-cap", nargs="*", help="Use logits soft cap")
     parser.add_argument(
         "--add-comm",
         type=parse_bool,
@@ -464,62 +401,25 @@ def main():
         type=parse_bool,
         help="Add kernels for OAI OSS Model (head_dim=64, use_sliding_window)",
     )
-    parser.add_argument(
-        "--add-moe",
-        type=parse_bool,
-        help="Add MoE kernels",
-    )
-    parser.add_argument(
-        "--add-act",
-        type=parse_bool,
-        help="Add activation kernels",
-    )
-    parser.add_argument(
-        "--add-misc",
-        type=parse_bool,
-        help="Add miscellaneous kernels",
-    )
+    parser.add_argument("--add-moe", type=parse_bool, help="Add MoE kernels")
+    parser.add_argument("--add-act", type=parse_bool, help="Add activation kernels")
+    parser.add_argument("--add-misc", type=parse_bool, help="Add miscellaneous kernels")
     args = parser.parse_args()
-
-    # Default values
     project_root = Path(__file__).resolve().parents[1]
     out_dir = project_root / "aot-ops"
     build_dir = project_root / "build" / "aot"
-    fa2_head_dim_ = [
-        (64, 64),
-        (128, 128),
-        # (256, 256),
-    ]
-    fa3_head_dim_ = [
-        (192, 128),
-        (128, 128),
-        # (64, 64),
-        # (256, 256),
-    ]
-    f16_dtype_ = [
-        torch.float16,
-        torch.bfloat16,
-    ]
-    f8_dtype_ = [
-        torch.float8_e4m3fn,
-        # torch.float8_e5m2,
-    ]
-    use_sliding_window_ = [
-        False,
-        # True,
-    ]
-    use_logits_soft_cap_ = [
-        False,
-        # True,
-    ]
+    fa2_head_dim_ = [(64, 64), (128, 128)]
+    fa3_head_dim_ = [(192, 128), (128, 128)]
+    f16_dtype_ = ["float16", "bfloat16"]
+>>>>>>    f8_dtype_ = [torch.float8_e4m3fn]
+    use_sliding_window_ = [False]
+    use_logits_soft_cap_ = [False]
     add_comm = False
     add_gemma = False
     add_oai_oss = True
     add_moe = False
     add_act = False
     add_misc = True
-
-    # Override
     if args.out_dir:
         out_dir = Path(args.out_dir)
     if args.build_dir:
@@ -548,23 +448,19 @@ def main():
         add_act = bool(args.add_act)
     if args.add_misc is not None:
         add_misc = bool(args.add_misc)
-
-    # Cuda Arch
     if "TORCH_CUDA_ARCH_LIST" not in os.environ:
         raise RuntimeError("Please explicitly set env var TORCH_CUDA_ARCH_LIST.")
-    gencode_flags = _get_cuda_arch_flags()
+>>>>>>    gencode_flags = torch.utils.cpp_extension._get_cuda_arch_flags()
 
     def has_sm(compute: str, version: str) -> bool:
         if not any(compute in flag for flag in gencode_flags):
             return False
-        if torch.version.cuda is None:
+>>>>>>        if torch.version.cuda is None:
             return True
-        return version_at_least(torch.version.cuda, version)
+>>>>>>        return version_at_least(torch.version.cuda, version)
 
     has_sm90 = has_sm("compute_90", "12.3")
     has_sm100 = has_sm("compute_100", "12.8")
-
-    # Update data dir
     jit_env.FLASHINFER_CSRC_DIR = project_root / "csrc"
     jit_env.FLASHINFER_INCLUDE_DIR = project_root / "include"
     jit_env.CUTLASS_INCLUDE_DIRS = [
@@ -572,15 +468,11 @@ def main():
         project_root / "3rdparty" / "cutlass" / "tools" / "util" / "include",
     ]
     jit_env.SPDLOG_INCLUDE_DIR = project_root / "3rdparty" / "spdlog" / "include"
-
-    # Update workdir
     jit_env.FLASHINFER_WORKSPACE_DIR = build_dir
     jit_env.FLASHINFER_JIT_DIR = build_dir / "cached_ops"
     jit_env.FLASHINFER_GEN_SRC_DIR = build_dir / "generated"
     jit_env.FLASHINFER_JIT_DIR.mkdir(parents=True, exist_ok=True)
     jit_env.FLASHINFER_GEN_SRC_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Print summary
     print("AOT build summary:")
     print("  out_dir:", out_dir)
     print("  build_dir:", build_dir)
@@ -599,15 +491,11 @@ def main():
     print("  add_moe:", add_moe)
     print("  add_act:", add_act)
     print("  add_misc:", add_misc)
-
-    # Generate JIT specs
     print("Generating JIT specs...")
     jit_specs = [
         gen_jit_spec(
             "logging",
-            [
-                jit_env.FLASHINFER_CSRC_DIR / "logging.cc",
-            ],
+            [jit_env.FLASHINFER_CSRC_DIR / "logging.cc"],
             extra_include_paths=[
                 jit_env.SPDLOG_INCLUDE_DIR,
                 jit_env.FLASHINFER_INCLUDE_DIR,
@@ -631,11 +519,7 @@ def main():
         add_misc,
     )
     print("Total ops:", len(jit_specs))
-
-    # Build
     build_jit_specs(jit_specs, verbose=True, skip_prebuilt=False)
-
-    # Copy built kernels
     copy_built_kernels(jit_specs, out_dir)
     print("AOT kernels saved to:", out_dir)
 
