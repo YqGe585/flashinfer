@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import cutlass
 import cutlass.cute as cute
 import paddle

@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import argparse
 import os
 import shutil
@@ -411,7 +411,7 @@ def main():
     fa2_head_dim_ = [(64, 64), (128, 128)]
     fa3_head_dim_ = [(192, 128), (128, 128)]
     f16_dtype_ = ["float16", "bfloat16"]
->>>>>>    f8_dtype_ = [torch.float8_e4m3fn]
+>>>>>>    f8_dtype_ = [paddle.float8_e4m3fn]
     use_sliding_window_ = [False]
     use_logits_soft_cap_ = [False]
     add_comm = False

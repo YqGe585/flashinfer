@@ -55,7 +55,7 @@ ext_modules: List[setuptools.Extension] = []
 cmdclass: Mapping[str, type[setuptools.Command]] = {}
 install_requires = [
     "numpy",
-    "paddlepaddle",
+    # "paddlepaddle",
     "ninja",
     "requests",
     "cuda-python<=12.9",

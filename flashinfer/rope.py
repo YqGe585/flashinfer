@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 from paddle_utils import *
 
@@ -1159,7 +1159,7 @@ def mla_rope_quantize_fp8(
                 quantize_dtype = out.dtype
                 break
         else:
->>>>>>            quantize_dtype = torch.float8_e4m3fn
+>>>>>>            quantize_dtype = paddle.float8_e4m3fn
     q_rope_out = (
         q_rope_out
         if q_rope_out is not None

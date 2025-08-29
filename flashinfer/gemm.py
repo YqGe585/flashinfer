@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import os
 
 import paddle
@@ -233,7 +233,7 @@ def gen_gemm_sm100_module() -> JitSpec:
             jit_env.FLASHINFER_CSRC_DIR / f"{prefix}_sm100_kernel_inst.jinja"
         ) as f:
             kernel_inst_templ = jinja2.Template(f.read())
->>>>>>        dtype_in_list = [torch.float8_e4m3fn, torch.float8_e5m2]
+>>>>>>        dtype_in_list = [paddle.float8_e4m3fn, paddle.float8_e5m2]
         dtype_out_list = ["float16", "bfloat16"]
         scale_major_k_list = ["true", "false"]
         mma_sm_list = [1, 2]
@@ -257,7 +257,7 @@ def gen_gemm_sm100_module() -> JitSpec:
     prefix = "group_gemm_mxfp4_groupwise"
     with open(jit_env.FLASHINFER_CSRC_DIR / f"{prefix}_sm100_kernel_inst.jinja") as f:
         kernel_inst_templ = jinja2.Template(f.read())
->>>>>>    dtype_a_list = [torch.float8_e4m3fn, torch.float8_e5m2]
+>>>>>>    dtype_a_list = [paddle.float8_e4m3fn, paddle.float8_e5m2]
     dtype_d_list = ["float16", "bfloat16"]
     mma_sm_list = [1, 2]
     swap_ab_list = ["true", "false"]
@@ -375,7 +375,7 @@ def fp8_gemm_sm100(
     runner_names: List[str],
 ) -> None:
     runners = []
->>>>>>    is_e5m2 = a.dtype == torch.float8_e5m2 or b.dtype == torch.float8_e5m2
+>>>>>>    is_e5m2 = a.dtype == paddle.float8_e5m2 or b.dtype == paddle.float8_e5m2
     is_sm100 = _match_sm_version(a.place, "100")
     if "cutlass" in runner_names and is_sm100 and not is_e5m2:
         runners.append(get_gemm_sm100_module_cutlass_fp8().cutlass_fp8_gemm_runner())
@@ -492,10 +492,10 @@ def gen_gemm_sm90_module() -> JitSpec:
     for dtype_in, dtype_out in [
         ("float16", "float16"),
         ("bfloat16", "bfloat16"),
->>>>>>        (torch.float8_e4m3fn, "float16"),
->>>>>>        (torch.float8_e5m2, "float16"),
->>>>>>        (torch.float8_e4m3fn, "bfloat16"),
->>>>>>        (torch.float8_e5m2, "bfloat16"),
+>>>>>>        (paddle.float8_e4m3fn, "float16"),
+>>>>>>        (paddle.float8_e5m2, "float16"),
+>>>>>>        (paddle.float8_e4m3fn, "bfloat16"),
+>>>>>>        (paddle.float8_e5m2, "bfloat16"),
     ]:
         name_dtype_in = filename_safe_dtype_map[dtype_in]
         name_dtype_out = filename_safe_dtype_map[dtype_out]
@@ -1116,8 +1116,8 @@ def execute_cudnn_gemm_fp4_graph(
     variant_pack = {
         UIDs.A_UID.value: a.view(_get_native_fp4_dtype()),
         UIDs.B_UID.value: b.view(_get_native_fp4_dtype()),
->>>>>>        UIDs.BLOCK_DESCALE_A_UID.value: a_descale.view(torch.float8_e4m3fn),
->>>>>>        UIDs.BLOCK_DESCALE_B_UID.value: b_descale.view(torch.float8_e4m3fn),
+>>>>>>        UIDs.BLOCK_DESCALE_A_UID.value: a_descale.view(paddle.float8_e4m3fn),
+>>>>>>        UIDs.BLOCK_DESCALE_B_UID.value: b_descale.view(paddle.float8_e4m3fn),
         UIDs.ALPHA_UID.value: alpha.view("float32"),
         UIDs.O_UID.value: c_final,
     }
@@ -1225,9 +1225,9 @@ def _torch_data_type_to_cudnn_data_type(dtype: paddle.dtype):
         return cudnn.data_type.BFLOAT16
     elif dtype == "float16":
         return cudnn.data_type.HALF
->>>>>>    elif dtype == torch.float8_e4m3fn:
+>>>>>>    elif dtype == paddle.float8_e4m3fn:
         return cudnn.data_type.FP8_E4M3
->>>>>>    elif dtype == torch.float8_e5m2:
+>>>>>>    elif dtype == paddle.float8_e5m2:
         return cudnn.data_type.FP8_E5M2
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
@@ -1405,8 +1405,8 @@ def mm_fp4(
         raise ValueError(
             f"a and b must have float4_e2m1fn_x2 packed into uint8. Got {a.dtype} and {b.dtype}."
         )
->>>>>>    if a_descale.dtype not in {torch.float8_e4m3fn, "uint8"} or b_descale.dtype not in {
->>>>>>        torch.float8_e4m3fn,
+>>>>>>    if a_descale.dtype not in {paddle.float8_e4m3fn, "uint8"} or b_descale.dtype not in {
+>>>>>>        paddle.float8_e4m3fn,
         "uint8",
     }:
         raise ValueError(
@@ -1454,7 +1454,7 @@ def mm_fp4(
             expanded_b_descale_shape,
             expanded_b_descale_stride,
             cudnn.data_type.FP4_E2M1,
->>>>>>            torch.float8_e4m3fn,
+>>>>>>            paddle.float8_e4m3fn,
             _torch_data_type_to_cudnn_data_type(out_dtype),
             block_size,
             a.place,
@@ -1478,9 +1478,9 @@ def mm_fp4(
             workspace_buffer=workspace_buffer,
         )
     elif backend == "cutlass":
->>>>>>        if a.dtype == "uint8" and a_descale.dtype == torch.float8_e4m3fn:
+>>>>>>        if a.dtype == "uint8" and a_descale.dtype == paddle.float8_e4m3fn:
             a_descale = a_descale.view("uint8")
->>>>>>        if b.dtype == "uint8" and b_descale.dtype == torch.float8_e4m3fn:
+>>>>>>        if b.dtype == "uint8" and b_descale.dtype == paddle.float8_e4m3fn:
             b_descale = b_descale.view("uint8")
         get_gemm_sm100_module_cutlass_fp4().cutlass_fp4_gemm(
             a, b.T, a_descale, b_descale.T, alpha, out, workspace_buffer
@@ -1533,7 +1533,7 @@ def bmm_fp8(
     >>> import torch
     >>> import torch.nn.functional as F
     >>> import flashinfer
-    >>> def to_float8(x, dtype=torch.float8_e4m3fn):
+    >>> def to_float8(x, dtype=paddle.float8_e4m3fn):
     ...     finfo = torch.finfo(dtype)
     ...     min_val, max_val = x.aminmax()
     ...     amax = torch.maximum(min_val.abs(), max_val.abs()).clamp(min=1e-12)
@@ -1542,10 +1542,10 @@ def bmm_fp8(
     ...     return x_scl_sat.to(dtype), scale.float().reciprocal()
     >>>
     >>> input = torch.randn([16, 48, 64], device="cuda", dtype=torch.bfloat16)
-    >>> input_fp8, input_inv_s = to_float8(input, dtype=torch.float8_e4m3fn)
+    >>> input_fp8, input_inv_s = to_float8(input, dtype=paddle.float8_e4m3fn)
     >>> # column major weight
     >>> weight = torch.randn([16, 80, 64], device="cuda", dtype=torch.bfloat16).transpose(-2, -1)
-    >>> weight_fp8, weight_inv_s = to_float8(weight, dtype=torch.float8_e4m3fn)
+    >>> weight_fp8, weight_inv_s = to_float8(weight, dtype=paddle.float8_e4m3fn)
     >>> out = flashinfer.bmm_fp8(input_fp8, weight_fp8, input_inv_s, weight_inv_s, torch.bfloat16)
     >>> out.shape
     torch.Size([16, 48, 80])
@@ -1565,7 +1565,7 @@ def bmm_fp8(
     elif backend == "cublas":
         backends = ["cublas"]
     elif backend == "cutlass":
->>>>>>        if A.dtype == torch.float8_e5m2 or B.dtype == torch.float8_e5m2:
+>>>>>>        if A.dtype == paddle.float8_e5m2 or B.dtype == paddle.float8_e5m2:
             raise ValueError("e5m2 is not supported for cutlass backend")
         backends = ["cutlass"]
     elif backend == "auto":
@@ -1844,11 +1844,11 @@ def group_gemm_fp8_nt_groupwise(
     Parameters
     ----------
     a: torch.Tensor
-        Row-major input tensor shape ``(cum_m, k)``, data type is ``torch.float8_e4m3fn`` or ``torch.float8_e5m2``.
+        Row-major input tensor shape ``(cum_m, k)``, data type is ``paddle.float8_e4m3fn`` or ``paddle.float8_e5m2``.
         ``cum_m`` is the cumulative sum of the segment lengths.
 
     b: torch.Tensor
-        Column-major input tensor shape ``(batch_size, n, k)``, data type is ``torch.float8_e4m3fn`` or ``torch.float8_e5m2``.
+        Column-major input tensor shape ``(batch_size, n, k)``, data type is ``paddle.float8_e4m3fn`` or ``paddle.float8_e5m2``.
 
     a_scale: torch.Tensor
         Column-major scale tensor for a, shape ``(cum_m, k // block_size)`` if scale_major_mode is ``K``
@@ -1898,8 +1898,8 @@ def group_gemm_fp8_nt_groupwise(
     float_workspace_buffer = _get_cache_buf(
         "group_gemm_fp8_nt_groupwise_float_workspace", DEFAULT_WORKSPACE_SIZE, a.place
     )
->>>>>>    assert a.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]
->>>>>>    assert b.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]
+>>>>>>    assert a.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
+>>>>>>    assert b.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
     assert a_scale.dtype == "float32"
     assert b_scale.dtype == "float32"
     assert m_indptr.dtype == "int32"
@@ -1964,7 +1964,7 @@ def group_gemm_mxfp8_mxfp4_nt_groupwise(
     Parameters
     ----------
     a: torch.Tensor
-        Row-major input tensor, shape ``(cum_m, k)``, data type is ``torch.float8_e4m3fn`` or ``torch.float8_e5m2``.
+        Row-major input tensor, shape ``(cum_m, k)``, data type is ``paddle.float8_e4m3fn`` or ``paddle.float8_e5m2``.
         ``cum_m`` is the cumulative sum of the segment lengths.
 
     b: torch.Tensor
@@ -2018,7 +2018,7 @@ def group_gemm_mxfp8_mxfp4_nt_groupwise(
     float_workspace_buffer = _get_cache_buf(
         "group_gemm_mxfp4_nt_groupwise_float_workspace", DEFAULT_WORKSPACE_SIZE, a.place
     )
->>>>>>    assert a.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]
+>>>>>>    assert a.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
     assert b.dtype == "uint8"
     assert a_scale.dtype == "uint8"
     assert b_scale.dtype == "uint8"
@@ -2132,11 +2132,11 @@ def group_deepgemm_fp8_nt_groupwise(
     Parameters
     ----------
     a : torch.Tensor
-        Input tensor A of shape ``(m, k)`` with FP8 data type (``torch.float8_e4m3fn``).
+        Input tensor A of shape ``(m, k)`` with FP8 data type (``paddle.float8_e4m3fn``).
         This tensor contains all rows that will be multiplied with different groups in `b`.
 
     b : torch.Tensor
-        Input tensor B of shape ``(batch_size, n, k)`` with FP8 data type (``torch.float8_e4m3fn``).
+        Input tensor B of shape ``(batch_size, n, k)`` with FP8 data type (``paddle.float8_e4m3fn``).
         Each slice ``b[i]`` represents a different group/expert that will be multiplied with
         the corresponding rows in `a`.
 
@@ -2190,7 +2190,7 @@ def group_deepgemm_fp8_nt_groupwise(
     >>>
     >>> # Quantize to FP8 with appropriate scaling
     >>> a_fp8, a_scale = per_token_cast_to_fp8(a_f32)
-    >>> b_fp8 = torch.empty_like(b_f32, dtype=torch.float8_e4m3fn)
+    >>> b_fp8 = torch.empty_like(b_f32, dtype=paddle.float8_e4m3fn)
     >>> b_scale = torch.empty((group_size, n // 128, k // 128), device="cuda", dtype=torch.float32)
     >>> for i in range(group_size):
     ...     b_fp8[i], b_scale[i] = per_block_cast_to_fp8(b_f32[i])
@@ -2257,12 +2257,12 @@ def batch_deepgemm_fp8_nt_groupwise(
     Parameters
     ----------
     a : torch.Tensor
-        Input tensor A of shape ``(batch_size, m, k)`` with FP8 data type (``torch.float8_e4m3fn``).
+        Input tensor A of shape ``(batch_size, m, k)`` with FP8 data type (``paddle.float8_e4m3fn``).
         Each slice ``a[i]`` represents a group of rows that will be multiplied with
         the corresponding group/expert in `b`.
 
     b : torch.Tensor
-        Input tensor B of shape ``(batch_size, n, k)`` with FP8 data type (``torch.float8_e4m3fn``).
+        Input tensor B of shape ``(batch_size, n, k)`` with FP8 data type (``paddle.float8_e4m3fn``).
         Each slice ``b[i]`` represents a different group/expert that will be multiplied with
         the corresponding rows in `a`.
 
@@ -2317,9 +2317,9 @@ def batch_deepgemm_fp8_nt_groupwise(
     >>> a = torch.rand((group_size, m, k), device="cuda", dtype=torch.float32)
     >>> b = torch.rand((group_size, n, k), device="cuda", dtype=torch.float32)
     >>> masked_m = torch.randint(0, m, (group_size,), device="cuda", dtype=torch.int32)
-    >>> a_fp8 = torch.empty_like(a, device="cuda", dtype=torch.float8_e4m3fn)
+    >>> a_fp8 = torch.empty_like(a, device="cuda", dtype=paddle.float8_e4m3fn)
     >>> a_scale = torch.empty((group_size, m, k // 128), device="cuda", dtype=torch.float32)
-    >>> b_fp8 = torch.empty_like(b, device="cuda", dtype=torch.float8_e4m3fn)
+    >>> b_fp8 = torch.empty_like(b, device="cuda", dtype=paddle.float8_e4m3fn)
     >>> b_scale = torch.empty(
     ...    (group_size, n // 128, k // 128), device="cuda", dtype=torch.float32
     >>> )

@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import functools
 
 import paddle
@@ -17,7 +17,7 @@ SHAPES = [(128, 64), (256, 128), (120, 64), (200, 256)]
 SEEDS = [42]
 CUDA_DEVICES = ["cuda:0"]
 FLOAT4_E2M1_MAX = 6.0
->>>>>>FLOAT8_E4M3_MAX = paddle.finfo(dtype=torch.float8_e4m3fn).max
+>>>>>>FLOAT8_E4M3_MAX = paddle.finfo(dtype=paddle.float8_e4m3fn).max
 BLOCK_SIZE = 16
 
 
@@ -108,7 +108,7 @@ def test_fp4_quantization(
     if sf_use_ue8m0:
         out_scale = (out_scale.to("int32") << 23).view("float32")
     else:
->>>>>>        out_scale = out_scale.view(torch.float8_e4m3fn).to("float32")
+>>>>>>        out_scale = out_scale.view(paddle.float8_e4m3fn).to("float32")
     if is_swizzled:
         scale_ans = recover_swizzled_scales(
             out_scale.reshape(-1, n // sf_vec_size), m, n, sf_vec_size

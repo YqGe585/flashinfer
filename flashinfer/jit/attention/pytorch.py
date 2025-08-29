@@ -401,7 +401,7 @@ def gen_single_prefill_module(
         use_logits_soft_cap,
         use_fp16_qk_reduction,
     )
->>>>>>    fp8_enabled = dtype_q in [torch.float8_e4m3fn, torch.float8_e5m2]
+    fp8_enabled = dtype_q in [paddle.float8_e4m3fn, paddle.float8_e5m2]
     if backend == "fa2":
         assert not fp8_enabled, "fp8 tensor core is not supported in fa2 backend"
         additional_tensor_names = ["maybe_custom_mask", "maybe_alibi_slopes"]
@@ -665,7 +665,7 @@ def gen_batch_prefill_module(
         use_logits_soft_cap,
         use_fp16_qk_reduction,
     )
->>>>>>    fp8_enabled = dtype_q in [torch.float8_e4m3fn, torch.float8_e5m2]
+    fp8_enabled = dtype_q in [paddle.float8_e4m3fn, paddle.float8_e5m2]
     if backend == "fa2":
         assert not fp8_enabled, "fp8 tensor core is not supported in fa2 backend"
         additional_tensor_names = [

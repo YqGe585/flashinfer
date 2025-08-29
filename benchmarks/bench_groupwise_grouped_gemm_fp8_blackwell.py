@@ -53,5 +53,5 @@ if __name__ == "__main__":
             for n in [1024, 2048, 4096, 8192]:
                 for k in [1024, 2048, 4096, 8192]:
                     bench_groupwise_grouped_gemm_fp8_blackwell(
->>>>>>                        batch_size, m, n, k, torch.float8_e5m2, "bfloat16"
+>>>>>>                        batch_size, m, n, k, paddle.float8_e5m2, "bfloat16"
                     )

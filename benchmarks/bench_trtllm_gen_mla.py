@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import numpy as np
 import paddle
 from paddle_utils import *
@@ -103,7 +103,7 @@ def bench_trtllm_mla(batch_size, q_len_per_request, seq_len, page_size, dtype):
 
 
 if __name__ == "__main__":
->>>>>>    for dtype in ["bfloat16", torch.float8_e4m3fn]:
+>>>>>>    for dtype in ["bfloat16", paddle.float8_e4m3fn]:
         for page_size in [32, 64]:
             for batch_size in [1, 2, 4, 16, 32, 64, 128, 256, 512, 768, 1024]:
                 for seq_len in [1024, 4096, 8192]:

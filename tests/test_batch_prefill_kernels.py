@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 from paddle_utils import *
 
@@ -31,7 +31,7 @@ def warmup_jit():
     flashinfer.jit.build_jit_specs(
         gen_prefill_attention_modules(
             ["float16"],
->>>>>>            ["float16", torch.float8_e4m3fn, torch.float8_e5m2],
+>>>>>>            ["float16", paddle.float8_e4m3fn, paddle.float8_e5m2],
             [128, 256],
             [0, 1],
             [False],

@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 from paddle_utils import *
 
@@ -55,9 +55,9 @@ def cutlass_to_torch_dtype(cutlass_dtype):
         cutlass.Float32: "float32",
         cutlass.Float16: "float16",
         cutlass.BFloat16: "bfloat16",
->>>>>>        cutlass.Float8E5M2: torch.float8_e5m2,
->>>>>>        cutlass.Float8E4M3FN: torch.float8_e4m3fn,
->>>>>>        cutlass.Float8E4M3B11FNUZ: torch.float8_e4m3fnuz,
+>>>>>>        cutlass.Float8E5M2: paddle.float8_e5m2,
+>>>>>>        cutlass.Float8E4M3FN: paddle.float8_e4m3fn,
+>>>>>>        cutlass.Float8E4M3B11FNUZ: paddle.float8_e4m3fnuz,
     }
     if torch_dtype is None:
         torch_dtype = torch_type_map.get(cutlass_dtype)

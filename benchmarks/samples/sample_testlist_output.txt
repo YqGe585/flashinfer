@@ -169,9 +169,9 @@ $ python3 flashinfer_benchmark.py --testlist samples/sample_testlist.txt --outpu
 [VVERBOSE] gpu_name = 'NVIDIA_B200'
 [INFO] To reproduce this test case, run the following command: python3 flashinfer_benchmark.py --routine bmm_fp8 --m 8192 --n 4096 --k 16384 --input_dtype fp8_e4m3 --mat2_dtype fp8_e4m3 --out_dtype bfloat16 --backends cudnn cublas cutlass --refcheck -vv --generate_repro_command --case_tag bmm_fp8_sample
 [VVERBOSE] input_fp8.shape = torch.Size([1, 8192, 16384])
-[VVERBOSE] input_fp8.dtype = torch.float8_e4m3fn
+[VVERBOSE] input_fp8.dtype = paddle.float8_e4m3fn
 [VVERBOSE] mat2_fp8.shape = torch.Size([1, 16384, 4096])
-[VVERBOSE] mat2_fp8.dtype = torch.float8_e4m3fn
+[VVERBOSE] mat2_fp8.dtype = paddle.float8_e4m3fn
 [VVERBOSE] input_inv_s = tensor(0.0127, device='cuda:0')
 [VVERBOSE] input_inv_s.dtype = torch.float32
 [VVERBOSE] mat2_inv_s = tensor(0.0127, device='cuda:0')

@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import functools
 import gc
 import os
@@ -59,7 +59,8 @@ _TORCH_COMPILE_CACHE: Dict[str, Any] = dict()
 
 
 def _set_torch_compile_options():
->>>>>>    torch._dynamo.config.cache_size_limit = 128
+# >>>>>>    torch._dynamo.config.cache_size_limit = 128
+    pass
 
 
 def _monkeypatch_add_torch_compile(func):
@@ -68,10 +69,8 @@ def _monkeypatch_add_torch_compile(func):
     """
     if type(func) is types.FunctionType:
         fn = func
->>>>>>    elif isinstance(func, torch._library.custom_ops.CustomOpDef):
-        fn = func._init_fn
     else:
-        raise ValueError(f"Unsupported fn type {type(func)}")
+        return
     fullname = fn.__module__ + "." + fn.__qualname__
     components = fullname.split(".")
     assert components[0] == "flashinfer"
@@ -82,17 +81,7 @@ def _monkeypatch_add_torch_compile(func):
         raise ValueError(f"Failed to monkeypatch: {fullname}")
 
     def wrapper(*args, **kwargs):
-        compiled = _TORCH_COMPILE_CACHE.get(fullname)
-        if compiled is None:
-            func(*args, **kwargs)
->>>>>>            compiled = torch.compile(
-                func,
-                fullgraph=True,
-                backend="inductor",
-                mode="max-autotune-no-cudagraphs",
-            )
-            _TORCH_COMPILE_CACHE[fn.__name__] = compiled
-        return compiled(*args, **kwargs)
+        return fn(*args, **kwargs)
 
     setattr(module, fn.__name__, wrapper)
     print("Applied torch.compile to", fullname)
@@ -100,8 +89,6 @@ def _monkeypatch_add_torch_compile(func):
 
 def pytest_configure(config):
     if os.environ.get("FLASHINFER_TEST_TORCH_COMPILE", "0") == "1":
->>>>>>        if torch_version < torch.torch_version.TorchVersion("2.4"):
-            pytest.skip("torch.compile requires torch >= 2.4")
         _set_torch_compile_options()
         for fn in TORCH_COMPILE_FNS:
             _monkeypatch_add_torch_compile(fn)
@@ -115,12 +102,11 @@ def is_cuda_oom_error_str(e: str) -> bool:
 def pytest_runtest_call(item):
     try:
         item.runtest()
->>>>>>    except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
->>>>>>        if isinstance(e, torch.cuda.OutOfMemoryError) or is_cuda_oom_error_str(str(e)):
+    except RuntimeError as e:
+        if is_cuda_oom_error_str(str(e)):
             pytest.skip("Skipping due to OOM")
         else:
             raise
-
 
 @functools.cache
 def get_device_properties(device: str):

@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 from typing import Tuple
 
 import numpy as np
@@ -15,12 +15,12 @@ import flashinfer
 def per_head_symmetric_quant(
     x: paddle.Tensor, quant_dtype: paddle.dtype
 ) -> Tuple[paddle.Tensor, paddle.Tensor]:
->>>>>>    assert quant_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]
+>>>>>>    assert quant_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
 
     def get_dtype_minmax(dtype: paddle.dtype) -> Tuple[float, float]:
->>>>>>        if dtype == torch.float8_e4m3fn:
+>>>>>>        if dtype == paddle.float8_e4m3fn:
             return -448.0, 448.0
->>>>>>        elif dtype == torch.float8_e5m2:
+>>>>>>        elif dtype == paddle.float8_e5m2:
             return -57344, 57344
         else:
             raise ValueError(f"Unsupported quantization dtype: {dtype}")
@@ -55,7 +55,7 @@ def bsr_attention_ref(q, k, v, indptr, indices, mask_data):
 @pytest.mark.parametrize("num_heads", [24, 32])
 @pytest.mark.parametrize("causal", [True, False])
 @pytest.mark.parametrize("head_dim", [64, 128, 256])
->>>>>>@pytest.mark.parametrize("dtype", [torch.float8_e4m3fn, torch.float8_e5m2])
+>>>>>>@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 def test_single_prefill(seq_len, num_heads, causal, head_dim, dtype):
     o_dtype = "float16"
     num_qo_heads = num_kv_heads = num_heads
@@ -92,7 +92,7 @@ def test_single_prefill(seq_len, num_heads, causal, head_dim, dtype):
 @pytest.mark.parametrize("num_heads", [1, 8, 24, 32])
 @pytest.mark.parametrize("head_dim", [64, 128, 256])
 @pytest.mark.parametrize("mask_inside_block", [False])
->>>>>>@pytest.mark.parametrize("dtype", [torch.float8_e4m3fn, torch.float8_e5m2])
+>>>>>>@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 def test_block_sparse_attention(
     R, C, M, N, num_heads, head_dim, mask_inside_block, dtype
 ):
@@ -153,7 +153,7 @@ if __name__ == "__main__":
                     for num_heads in [8]:
                         for head_dim in [256]:
                             for mask_inside_block in [False]:
->>>>>>                                for dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>                                for dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
                                     test_block_sparse_attention(
                                         R,
                                         C,

@@ -85,8 +85,8 @@ def create_dlpack_capsule(
     bits_per_elements = 0
     dldata_type_code = 0
     if torch_dtype in [
->>>>>>        torch.float8_e5m2,
->>>>>>        torch.float8_e4m3fn,
+>>>>>>        paddle.float8_e5m2,
+>>>>>>        paddle.float8_e4m3fn,
         "bfloat16",
         "float16",
         "float32",

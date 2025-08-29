@@ -26,7 +26,7 @@ import flashinfer
 @pytest.mark.parametrize("head_dim", [128])
 @pytest.mark.parametrize("kv_layout", ["NHD"])
 @pytest.mark.parametrize("pos_encoding_mode", ["NONE"])
->>>>>>@pytest.mark.parametrize("fp8_dtype", [torch.float8_e4m3fn])
+>>>>>>@pytest.mark.parametrize("fp8_dtype", [paddle.float8_e4m3fn])
 def test_single_decode_fp8_calibration_scale(
     kv_len,
     num_kv_heads,
@@ -76,7 +76,7 @@ def test_single_decode_fp8_calibration_scale(
 @pytest.mark.parametrize("head_dim", [128, 256])
 @pytest.mark.parametrize("kv_layout", ["HND", "NHD"])
 @pytest.mark.parametrize("pos_encoding_mode", ["NONE", "ROPE_LLAMA"])
->>>>>>@pytest.mark.parametrize("dtype", [torch.float8_e4m3fn, torch.float8_e5m2])
+>>>>>>@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 def test_batch_decode_with_paged_kv_cache_fp8_calibration_scale(
     batch_size,
     kv_len,
@@ -152,8 +152,8 @@ def test_batch_decode_with_paged_kv_cache_fp8_calibration_scale(
 
 if __name__ == "__main__":
     test_single_decode_fp8_calibration_scale(
->>>>>>        1170, 4, 32, 128, "NHD", "NONE", torch.float8_e4m3fn
+>>>>>>        1170, 4, 32, 128, "NHD", "NONE", paddle.float8_e4m3fn
     )
     test_batch_decode_with_paged_kv_cache_fp8_calibration_scale(
->>>>>>        12, 54, 1, 4, 4, 128, "NHD", "NONE", torch.float8_e5m2
+>>>>>>        12, 54, 1, 4, 4, 128, "NHD", "NONE", paddle.float8_e5m2
     )

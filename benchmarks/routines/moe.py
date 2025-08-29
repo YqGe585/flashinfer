@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 from collections import defaultdict
 from typing import Optional
 
@@ -429,14 +429,14 @@ def _compute_routing(router_logits: paddle.Tensor, top_k: int):
 
 
 def _dynamic_per_tensor_fp8_quant(x: paddle.Tensor):
->>>>>>    fp8_max = paddle.finfo(dtype=torch.float8_e4m3fn).max
+>>>>>>    fp8_max = paddle.finfo(dtype=paddle.float8_e4m3fn).max
     x_max = x.abs()._max().astype(dtype="float32").clip(min=1e-06)
     scale = x_max / fp8_max
     inv_scale = 1.0 / scale
     out = (
         (x.astype(dtype="float32") * inv_scale)
         .clip(min=-fp8_max, max=fp8_max)
->>>>>>        .to(torch.float8_e4m3fn)
+>>>>>>        .to(paddle.float8_e4m3fn)
     )
     return out, scale.view((1,))
 
@@ -538,7 +538,7 @@ def testTrtllmFp4BlockScaleMoe(args):
         tuple(hidden_states.shape)[0], tuple(hidden_states.shape)[1] // 2
     )
     hidden_states_scale_linear_fp4 = hidden_states_scale_fp4_bytes.view(
->>>>>>        torch.float8_e4m3fn
+>>>>>>        paddle.float8_e4m3fn
     )
     expected_scale_elems = num_tokens * hidden_size // 16
     if hidden_states_scale_linear_fp4.size != expected_scale_elems:
@@ -547,7 +547,7 @@ def testTrtllmFp4BlockScaleMoe(args):
                 f"[INFO] Adjusting FP4 hidden_states_scale from {hidden_states_scale_linear_fp4.size} to {expected_scale_elems} elements"
             )
         hidden_states_scale_linear_fp4 = paddle.ones(
->>>>>>            shape=expected_scale_elems, dtype=torch.float8_e4m3fn
+>>>>>>            shape=expected_scale_elems, dtype=paddle.float8_e4m3fn
         )
     hidden_states_scale_linear_fp4 = hidden_states_scale_linear_fp4.reshape(
         num_tokens, hidden_size // 16
@@ -555,13 +555,13 @@ def testTrtllmFp4BlockScaleMoe(args):
     gemm1_weights_fp4 = gemm1_weights_fp4_bytes.view("uint8").reshape(
         num_experts, 2 * intermediate_size, hidden_size // 2
     )
->>>>>>    gemm1_weights_scale = gemm1_scales_fp4_bytes.view(torch.float8_e4m3fn).reshape(
+>>>>>>    gemm1_weights_scale = gemm1_scales_fp4_bytes.view(paddle.float8_e4m3fn).reshape(
         num_experts, 2 * intermediate_size, hidden_size // 16
     )
     gemm2_weights_fp4 = gemm2_weights_fp4_bytes.view("uint8").reshape(
         num_experts, hidden_size, intermediate_size // 2
     )
->>>>>>    gemm2_weights_scale = gemm2_scales_fp4_bytes.view(torch.float8_e4m3fn).reshape(
+>>>>>>    gemm2_weights_scale = gemm2_scales_fp4_bytes.view(paddle.float8_e4m3fn).reshape(
         num_experts, hidden_size, intermediate_size // 16
     )
     gemm1_bias = None
@@ -784,8 +784,8 @@ def testCutlassFusedMoe(args):
             )
 
     elif variant == "fp8":
->>>>>>        w31_weight_fp8 = paddle.empty_like(x=w31_local, dtype=torch.float8_e4m3fn)
->>>>>>        w2_weight_fp8 = paddle.empty_like(x=w2_local, dtype=torch.float8_e4m3fn)
+>>>>>>        w31_weight_fp8 = paddle.empty_like(x=w31_local, dtype=paddle.float8_e4m3fn)
+>>>>>>        w2_weight_fp8 = paddle.empty_like(x=w2_local, dtype=paddle.float8_e4m3fn)
         local_num_experts = tuple(w31_local.shape)[0]
         w31_scales = paddle.empty(shape=[local_num_experts, 2], dtype=input_dtype)
         w2_scales = paddle.empty(shape=[local_num_experts, 1], dtype=input_dtype)
@@ -828,7 +828,7 @@ def testCutlassFusedMoe(args):
 
     elif variant == "nvfp4":
         FLOAT4_E2M1_MAX = 6.0
->>>>>>        FLOAT8_E4M3_MAX = paddle.finfo(dtype=torch.float8_e4m3fn).max
+>>>>>>        FLOAT8_E4M3_MAX = paddle.finfo(dtype=paddle.float8_e4m3fn).max
 
         def round_up(x_val, y):
             return (x_val + y - 1) // y * y
@@ -841,11 +841,11 @@ def testCutlassFusedMoe(args):
         w2_q = paddle.empty(shape=(e, k, n // 2), dtype="uint8")
         w1_blockscale = paddle.empty(
             shape=(e, round_up(2 * n, 128), round_up(k // quant_blocksize, 4)),
->>>>>>            dtype=torch.float8_e4m3fn,
+>>>>>>            dtype=paddle.float8_e4m3fn,
         )
         w2_blockscale = paddle.empty(
             shape=(e, round_up(k, 128), round_up(n // quant_blocksize, 4)),
->>>>>>            dtype=torch.float8_e4m3fn,
+>>>>>>            dtype=paddle.float8_e4m3fn,
         )
         w1_gs = paddle.empty(shape=(e,), dtype="float32")
         w2_gs = paddle.empty(shape=(e,), dtype="float32")
@@ -1058,8 +1058,8 @@ def testTrtllmFp8BlockScaleMoe(args):
         device,
         moe_kernel_type="fp8_block_scale",
     )
->>>>>>    gemm1_weights_fp8 = gemm1_weights.to(torch.float8_e4m3fn)
->>>>>>    gemm2_weights_fp8 = gemm2_weights.to(torch.float8_e4m3fn)
+>>>>>>    gemm1_weights_fp8 = gemm1_weights.to(paddle.float8_e4m3fn)
+>>>>>>    gemm2_weights_fp8 = gemm2_weights.to(paddle.float8_e4m3fn)
     if use_shuffled_weight:
         epilogue_tile_m = 64
         gemm1_weights_fp8_shuffled = []
@@ -1078,10 +1078,10 @@ def testTrtllmFp8BlockScaleMoe(args):
             gemm1_weights_fp8_shuffled.append(tmp_w1)
             gemm2_weights_fp8_shuffled.append(tmp_w2)
         kernel_gemm1_weights = paddle.stack(x=gemm1_weights_fp8_shuffled).view(
->>>>>>            torch.float8_e4m3fn
+>>>>>>            paddle.float8_e4m3fn
         )
         kernel_gemm2_weights = paddle.stack(x=gemm2_weights_fp8_shuffled).view(
->>>>>>            torch.float8_e4m3fn
+>>>>>>            paddle.float8_e4m3fn
         )
     else:
         kernel_gemm1_weights = gemm1_weights_fp8
@@ -1123,7 +1123,7 @@ def testTrtllmFp8BlockScaleMoe(args):
         tile_tokens_dim = suggested_tile
 
     def run_fp8_block_moe():
->>>>>>        hidden_states_fp8 = hidden_states.to(torch.float8_e4m3fn)
+>>>>>>        hidden_states_fp8 = hidden_states.to(paddle.float8_e4m3fn)
         return trtllm_fp8_block_scale_moe(
             routing_logits=routing_logits,
             routing_bias=routing_bias,
@@ -1296,9 +1296,9 @@ def testTrtllmFp8PerTensorScaleMoe(args):
         device,
         moe_kernel_type="fp8_per_tensor",
     )
->>>>>>    gemm1_weights_fp8 = gemm1_weights.to(torch.float8_e4m3fn)
->>>>>>    gemm2_weights_fp8 = gemm2_weights.to(torch.float8_e4m3fn)
->>>>>>    hidden_states_fp8 = hidden_states.to(torch.float8_e4m3fn)
+>>>>>>    gemm1_weights_fp8 = gemm1_weights.to(paddle.float8_e4m3fn)
+>>>>>>    gemm2_weights_fp8 = gemm2_weights.to(paddle.float8_e4m3fn)
+>>>>>>    hidden_states_fp8 = hidden_states.to(paddle.float8_e4m3fn)
     output1_scales_scalar = paddle.ones(shape=local_num_experts, dtype="float32")
     output1_scales_gate_scalar = paddle.ones(shape=local_num_experts, dtype="float32")
     output2_scales_scalar = paddle.ones(shape=local_num_experts, dtype="float32")

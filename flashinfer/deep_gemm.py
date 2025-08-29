@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 from paddle_utils import *
 
@@ -98,7 +98,7 @@ def get_major_type_cd(t: paddle.Tensor):
 
 
 def get_element_size(dtype: paddle.dtype):
->>>>>>    return {torch.float8_e4m3fn: 1, "bfloat16": 2, "float32": 4}[dtype]
+>>>>>>    return {paddle.float8_e4m3fn: 1, "bfloat16": 2, "float32": 4}[dtype]
 
 
 def get_m_alignment_for_contiguous_layout():
@@ -313,7 +313,7 @@ def get_sf_aligned_block_sizes(block_m: int, block_n: int, ab_dtype: paddle.dtyp
     assert block_m % num_utccp_aligned_elems == 0
     return {
         "bfloat16": (0, 0),
->>>>>>        torch.float8_e4m3fn: (
+>>>>>>        paddle.float8_e4m3fn: (
             round_up(block_m, num_utccp_aligned_elems),
             round_up(block_n, num_utccp_aligned_elems),
         ),
@@ -387,7 +387,7 @@ def get_best_configs(
     cd_dtype: paddle.dtype,
     num_sms: int,
 ) -> Tuple[int, int, int, int, int, MulticastConfig, SharedMemoryConfig]:
->>>>>>    assert ab_dtype == torch.float8_e4m3fn
+>>>>>>    assert ab_dtype == paddle.float8_e4m3fn
     assert cd_dtype in ("bfloat16", "float32")
     block_ms: Tuple[int, ...] = None
     if gemm_type == GemmType.GroupedContiguous:
@@ -499,10 +499,10 @@ tmap_type_map: Dict[Any, str] = {
     "float32": cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_FLOAT32,
     "float16": cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_FLOAT16,
     "bfloat16": cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_BFLOAT16,
->>>>>>    torch.float8_e4m3fn: cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_UINT8,
->>>>>>    torch.float8_e4m3fnuz: cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_UINT8,
->>>>>>    torch.float8_e5m2: cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_UINT8,
->>>>>>    torch.float8_e5m2fnuz: cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_UINT8,
+>>>>>>    paddle.float8_e4m3fn: cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_UINT8,
+>>>>>>    paddle.float8_e4m3fnuz: cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_UINT8,
+>>>>>>    paddle.float8_e5m2: cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_UINT8,
+>>>>>>    paddle.float8_e5m2fnuz: cbd.CUtensorMapDataType.CU_TENSOR_MAP_DATA_TYPE_UINT8,
 }
 swizzle_type_map = {
     (0): cbd.CUtensorMapSwizzle.CU_TENSOR_MAP_SWIZZLE_NONE,
@@ -856,7 +856,7 @@ def m_grouped_fp8_gemm_nt_contiguous_static_kwargs_gen(
         major_a,
         major_b,
         major_d,
->>>>>>        torch.float8_e4m3fn,
+>>>>>>        paddle.float8_e4m3fn,
         output_dtype,
         num_sms,
     )
@@ -1052,7 +1052,7 @@ def m_grouped_fp8_gemm_nt_masked_static_kwargs_gen(
         major_a,
         major_b,
         major_d,
->>>>>>        torch.float8_e4m3fn,
+>>>>>>        paddle.float8_e4m3fn,
         output_dtype,
         num_sms,
     )
@@ -1243,8 +1243,8 @@ def m_grouped_fp8_gemm_nt_contiguous(
     m__ = m_indices.size
     assert m == m_ == m__ and n == n_ and k == k_
     assert n > 0 and k > 0 and num_groups > 0
->>>>>>    assert a.dtype == torch.float8_e4m3fn
->>>>>>    assert b.dtype == torch.float8_e4m3fn
+>>>>>>    assert a.dtype == paddle.float8_e4m3fn
+>>>>>>    assert b.dtype == paddle.float8_e4m3fn
     assert d.dtype == "bfloat16"
     assert m_indices.dtype == "int32"
     assert get_major_type_cd(d) == MajorTypeCD.NMajor
@@ -1289,8 +1289,8 @@ def m_grouped_fp8_gemm_nt_masked(
     assert num_groups == num_groups_ == num_groups__ == num_groups___
     assert m == m_ and n == n_ and k == k_
     assert expected_m > 0 and m > 0 and n > 0 and k > 0 and num_groups > 0
->>>>>>    assert a.dtype == torch.float8_e4m3fn
->>>>>>    assert b.dtype == torch.float8_e4m3fn
+>>>>>>    assert a.dtype == paddle.float8_e4m3fn
+>>>>>>    assert b.dtype == paddle.float8_e4m3fn
     assert d.dtype == "bfloat16"
     assert masked_m.dtype == "int32"
     assert get_major_type_cd(d) == MajorTypeCD.NMajor

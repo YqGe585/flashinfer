@@ -60,7 +60,7 @@ def bench_gemm_descriptor_persistent(
 if __name__ == "__main__":
     assert supports_tma()
     for M, N, K in [(4096, 4096, 4096), (8192, 8192, 8192)]:
->>>>>>        for dtype in [torch.float8_e4m3fn, "float16", "bfloat16", "float32"]:
+>>>>>>        for dtype in [paddle.float8_e4m3fn, "float16", "bfloat16", "float32"]:
             for num_sms in [1, 16, 32, 64, 128, 132, 133, 256]:
                 bench_gemm_persistent(num_sms, dtype, M, N, K)
                 bench_gemm_descriptor_persistent(num_sms, dtype, M, N, K)

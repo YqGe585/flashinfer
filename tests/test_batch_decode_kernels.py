@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 from paddle_utils import *
 
@@ -31,7 +31,7 @@ def warmup_jit():
     flashinfer.jit.build_jit_specs(
         gen_decode_attention_modules(
             ["float16"],
->>>>>>            ["float16", torch.float8_e4m3fn],
+>>>>>>            ["float16", paddle.float8_e4m3fn],
             [128, 256],
             [0, 1],
             [False],
@@ -39,7 +39,7 @@ def warmup_jit():
         )
         + gen_prefill_attention_modules(
             ["float16"],
->>>>>>            ["float16", torch.float8_e4m3fn],
+>>>>>>            ["float16", paddle.float8_e4m3fn],
             [128, 256],
             [0, 1],
             [False],
@@ -62,7 +62,7 @@ def warmup_jit():
 @pytest.mark.parametrize("logits_soft_cap", [0.0])
 @pytest.mark.parametrize("return_lse", [True])
 @pytest.mark.parametrize("q_dtype", ["float16"])
->>>>>>@pytest.mark.parametrize("kv_dtype", ["float16", torch.float8_e4m3fn])
+>>>>>>@pytest.mark.parametrize("kv_dtype", ["float16", paddle.float8_e4m3fn])
 @pytest.mark.parametrize("contiguous_kv", [True])
 def test_batch_decode_with_paged_kv_cache(
     batch_size,
@@ -191,7 +191,7 @@ def test_batch_decode_with_paged_kv_cache(
 @pytest.mark.parametrize("logits_soft_cap", [0.0])
 @pytest.mark.parametrize("return_lse", [True])
 @pytest.mark.parametrize("q_dtype", ["float16"])
->>>>>>@pytest.mark.parametrize("kv_dtype", ["float16", torch.float8_e4m3fn])
+>>>>>>@pytest.mark.parametrize("kv_dtype", ["float16", paddle.float8_e4m3fn])
 @pytest.mark.parametrize("contiguous_kv", [True])
 def test_batch_decode_with_tuple_paged_kv_cache(
     batch_size,
@@ -319,7 +319,7 @@ def test_batch_decode_with_tuple_paged_kv_cache(
 @pytest.mark.parametrize("kv_layout", ["NHD"])
 @pytest.mark.parametrize("pos_encoding_mode", ["NONE", "ROPE_LLAMA"])
 @pytest.mark.parametrize("q_dtype", ["float16"])
->>>>>>@pytest.mark.parametrize("kv_dtype", ["float16", torch.float8_e4m3fn])
+>>>>>>@pytest.mark.parametrize("kv_dtype", ["float16", paddle.float8_e4m3fn])
 @pytest.mark.parametrize("contiguous_kv", [True])
 def test_cuda_graph_batch_decode_with_paged_kv_cache(
     batch_size,
@@ -505,7 +505,7 @@ if __name__ == "__main__":
         0.0,
         True,
         "float16",
->>>>>>        torch.float8_e5m2,
+>>>>>>        paddle.float8_e5m2,
         True,
     )
     test_cuda_graph_batch_decode_with_paged_kv_cache(
@@ -526,9 +526,9 @@ if __name__ == "__main__":
         0.0,
         True,
         "float16",
->>>>>>        torch.float8_e5m2,
+>>>>>>        paddle.float8_e5m2,
         True,
     )
     test_cuda_graph_batch_decode_with_paged_kv_cache(
->>>>>>        12, 54, 8, 8, 8, 128, "HND", "NONE", "float16", torch.float8_e5m2, True
+>>>>>>        12, 54, 8, 8, 8, 128, "HND", "NONE", "float16", paddle.float8_e5m2, True
     )

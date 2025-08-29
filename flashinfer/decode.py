@@ -1948,7 +1948,7 @@ def trtllm_batch_decode_with_kv_cache(
     sm_count = get_device_sm_count(query.place)
     if out_dtype == "nvfp4" or out_dtype is None and isinstance(out, FP4Tensor):
         assert (
->>>>>>            query.dtype == torch.float8_e4m3fn
+            query.dtype == paddle.float8_e4m3fn
         ), "query must be fp8 when out_dtype is nvfp4."
         assert o_sf_scale is not None
         assert o_sf_vec_size in [None, 16], "only o_sf_vec_size = 16 is supported"
@@ -1966,7 +1966,7 @@ def trtllm_batch_decode_with_kv_cache(
                 tuple(query.shape)[1] * tuple(query.shape)[2] // o_sf_vec_size, 4
             )
             out_scale_factor = paddle.empty(
->>>>>>                shape=fp4_out_scale_shape, dtype=torch.float8_e4m3fn
+                shape=fp4_out_scale_shape, dtype=paddle.float8_e4m3fn
             )
             o_sf_start_index = 0
             out = paddle.empty(shape=fp4_out_shape, dtype="uint8")
@@ -1977,7 +1977,7 @@ def trtllm_batch_decode_with_kv_cache(
         check_shape_dtype_device(
             out_scale_factor,
             fp4_out_scale_shape,
->>>>>>            torch.float8_e4m3fn,
+            paddle.float8_e4m3fn,
             query.place,
             "out_scale_factor",
         )
@@ -2142,7 +2142,7 @@ def trtllm_batch_decode_with_kv_cache_mla(
             out, [batch_size, num_q_heads, kv_lora_rank], "bfloat16", query.place, "out"
         )
     if bmm1_scale_log2_tensor is not None and bmm2_scale_tensor is not None:
->>>>>>        if query.dtype != torch.float8_e4m3fn or kv_cache.dtype != torch.float8_e4m3fn:
+        if query.dtype != paddle.float8_e4m3fn or kv_cache.dtype != paddle.float8_e4m3fn:
             raise ValueError(
                 "Dynamic scale factors bmm1_scale_tensor and bmm2_scale_tensor are only supported for fp8 tensor core operation"
             )

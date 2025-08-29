@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import functools
 from typing import Callable, List, Optional, Tuple, Type, Union
 

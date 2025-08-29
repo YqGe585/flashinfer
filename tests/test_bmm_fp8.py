@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 import pytest
 from paddle_utils import *
@@ -8,7 +8,7 @@ from paddle_utils import *
 from flashinfer import autotune, bmm_fp8
 
 
->>>>>>def to_float8(x, dtype=torch.float8_e4m3fn):
+>>>>>>def to_float8(x, dtype=paddle.float8_e4m3fn):
     finfo = paddle.finfo(dtype=dtype)
     min_val, max_val = tuple(
         [
@@ -26,15 +26,15 @@ from flashinfer import autotune, bmm_fp8
 @pytest.mark.parametrize("m", [48, 128])
 @pytest.mark.parametrize("n", [80, 64])
 @pytest.mark.parametrize("k", [64, 256])
->>>>>>@pytest.mark.parametrize("input_dtype", [torch.float8_e4m3fn, torch.float8_e5m2])
->>>>>>@pytest.mark.parametrize("mat2_dtype", [torch.float8_e4m3fn, torch.float8_e5m2])
+>>>>>>@pytest.mark.parametrize("input_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
+>>>>>>@pytest.mark.parametrize("mat2_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 @pytest.mark.parametrize("res_dtype", ["bfloat16", "float16"])
 @pytest.mark.parametrize("backend", ["cudnn", "cublas", "cutlass", "auto"])
 @pytest.mark.parametrize("auto_tuning", [True, False])
 def test_bmm_fp8(b, m, n, k, input_dtype, mat2_dtype, res_dtype, backend, auto_tuning):
->>>>>>    if input_dtype == torch.float8_e5m2 and mat2_dtype == torch.float8_e5m2:
+>>>>>>    if input_dtype == paddle.float8_e5m2 and mat2_dtype == paddle.float8_e5m2:
         pytest.skip("Invalid combination: both input and mat2 are e5m2")
->>>>>>    if input_dtype == torch.float8_e5m2 or mat2_dtype == torch.float8_e5m2:
+>>>>>>    if input_dtype == paddle.float8_e5m2 or mat2_dtype == paddle.float8_e5m2:
         if backend == "cutlass":
             pytest.skip("Invalid combination: cutlass does not support e5m2")
     if auto_tuning and backend != "cutlass":

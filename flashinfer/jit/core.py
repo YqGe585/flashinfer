@@ -47,7 +47,7 @@ logger = FlashInferJITLogger("flashinfer.jit")
 def check_cuda_arch():
     dev = paddle.device.get_device()
     dev_id = int(dev.split(":")[1])
-    props = paddle.device.cuda.get_device_properties(dev_id)
+    props = paddle.device.get_device_properties(dev_id)
     arch = props.major * 10 + props.minor
     if arch < 75:
         raise RuntimeError(

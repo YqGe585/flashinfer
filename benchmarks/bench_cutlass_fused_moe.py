@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 from paddle_utils import *
 
@@ -30,7 +30,7 @@ from flashinfer.autotuner import AutoTuner, autotune, get_config_path
 from flashinfer.testing.utils import bench_gpu_time
 
 FLOAT4_E2M1_MAX = 6.0
->>>>>>FLOAT8_E4M3_MAX = paddle.finfo(dtype=torch.float8_e4m3fn).max
+>>>>>>FLOAT8_E4M3_MAX = paddle.finfo(dtype=paddle.float8_e4m3fn).max
 test_configs = [
     {"hidden_size": 7168, "num_experts": 256, "top_k": 8, "intermediate_size": 256},
     {"hidden_size": 7168, "num_experts": 32, "top_k": 8, "intermediate_size": 2048},
@@ -77,15 +77,15 @@ def bench_cutlass_fused_moe(
     sf_w1_2n = round_up(2 * n, 128)
     sf_w1_k = round_up(k // quant_blocksize, 4)
     w1_blockscale = paddle.empty(
->>>>>>        shape=(e, sf_w1_2n, sf_w1_k), dtype=torch.float8_e4m3fn
+>>>>>>        shape=(e, sf_w1_2n, sf_w1_k), dtype=paddle.float8_e4m3fn
     )
     w1_blockscale_cutlass = paddle.empty(
->>>>>>        shape=(e, sf_w1_2n, sf_w1_k), dtype=torch.float8_e4m3fn
+>>>>>>        shape=(e, sf_w1_2n, sf_w1_k), dtype=paddle.float8_e4m3fn
     )
     w2 = paddle.randn(shape=(e, k, n), dtype=otype) / 10
     sf_w2_k = round_up(k, 128)
     sf_w2_n = round_up(n // quant_blocksize, 4)
->>>>>>    w2_blockscale = paddle.empty(shape=(e, sf_w2_k, sf_w2_n), dtype=torch.float8_e4m3fn)
+>>>>>>    w2_blockscale = paddle.empty(shape=(e, sf_w2_k, sf_w2_n), dtype=paddle.float8_e4m3fn)
     w1_q = paddle.empty(shape=(e, 2 * n, k // 2), dtype="uint8")
     w1_q_cutlass = paddle.empty(shape=(e, 2 * n, k // 2), dtype="uint8")
     w2_q = paddle.empty(shape=(e, k, n // 2), dtype="uint8")

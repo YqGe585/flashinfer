@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import os
 
 import paddle
@@ -103,7 +103,7 @@ def _check_kv_layout(kv_layout: str) -> None:
 
 
 def is_float8(x: paddle.Tensor) -> bool:
->>>>>>    return x.dtype in [torch.float8_e4m3fn, torch.float8_e5m2]
+    return x.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
 
 
 def get_indptr(x: paddle.Tensor) -> paddle.Tensor:
@@ -212,45 +212,24 @@ def _check_cached_qkv_data_type(
             f"The dtype of k {k.dtype} does not match the kv_data_type {dtype_kv} specified in plan function."
         )
 
+def register_custom_op(
+    name: str,
+    fn: Optional[Callable] = None,
+    /,
+    *,
+    mutates_args: Union[str, Iterable[str]],
+    device_types: Optional[Union[str, Sequence[str]]] = None,
+    schema: Optional[str] = None,
+) -> Callable:
+    return lambda x: x
 
->>>>>>if IS_BUILDING_DOCS or torch.torch_version.TorchVersion(
-    torch_version
->>>>>>) < torch.torch_version.TorchVersion("2.4"):
-
-    def register_custom_op(
-        name: str,
-        fn: Optional[Callable] = None,
-        /,
-        *,
-        mutates_args: Union[str, Iterable[str]],
-        device_types: Optional[Union[str, Sequence[str]]] = None,
-        schema: Optional[str] = None,
-    ) -> Callable:
-        return lambda x: x
-
-    def register_fake_op(name: str, fn: Optional[Callable] = None) -> Callable:
-        return lambda x: x
-
-else:
-
-    def register_custom_op(
-        name: str,
-        fn: Optional[Callable] = None,
-        /,
-        *,
-        mutates_args: Union[str, Iterable[str]],
-        device_types: Optional[Union[str, Sequence[str]]] = None,
-        schema: Optional[str] = None,
-    ) -> Callable:
-        return lambda x: x
-
-    def register_fake_op(name: str, fn: Optional[Callable] = None) -> Callable:
-        return lambda x: x
+def register_fake_op(name: str, fn: Optional[Callable] = None) -> Callable:
+    return lambda x: x
 
 
 def determine_gemm_backend(device: str) -> str:
     major, _ = get_compute_capability(device)
->>>>>>    if major == 9 and torch.version.cuda >= "12.3":
+    if major == 9:
         return "sm90"
     else:
         return "sm80"
@@ -329,9 +308,9 @@ def is_cutlass_backend_supported(
         return False
     if use_fp16_qk_reductions:
         return False
->>>>>>    if dtype_q in [torch.float8_e4m3fn, torch.float8_e5m2]:
+    if dtype_q in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         return False
->>>>>>    if dtype_kv in [torch.float8_e4m3fn, torch.float8_e5m2]:
+    if dtype_kv in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         return False
     return True
 
@@ -397,12 +376,12 @@ def has_cuda_cudart() -> bool:
 
 def is_sm90a_supported(device: str) -> bool:
     major, _ = get_compute_capability(device)
->>>>>>    return major == 9 and version_at_least(torch.version.cuda, "12.3")
+    return major == 9
 
 
 def is_sm100a_supported(device: str) -> bool:
     major, _ = get_compute_capability(device)
->>>>>>    return major == 10 and version_at_least(torch.version.cuda, "12.8")
+    return major == 10
 
 
 def determine_mla_backend(device: str) -> str:
@@ -524,7 +503,7 @@ class FP4Tensor:
         """
         if data.dtype != "uint8":
             raise ValueError(f"data must be uint8 tensor, got {data.dtype}")
->>>>>>        if scale.dtype != torch.float8_e4m3fn:
+        if scale.dtype != paddle.float8_e4m3fn:
             raise ValueError(f"scale must be float8_e4m3fn tensor, got {scale.dtype}")
         if tuple(scale.shape)[0] % 128 != 0:
             raise ValueError(

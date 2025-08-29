@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import einops
 import paddle
 from paddle_utils import *
@@ -335,7 +335,7 @@ class BlockSparseAttentionWrapper:
         if (
             R * (num_qo_heads // num_kv_heads) < 4
             and mask_mode != MaskMode.CUSTOM.value
->>>>>>            and q_data_type not in [torch.float8_e4m3fn, torch.float8_e5m2]
+>>>>>>            and q_data_type not in [paddle.float8_e4m3fn, paddle.float8_e5m2]
         ):
             self._use_tensor_cores = False
             self._cached_module = get_batch_decode_module(

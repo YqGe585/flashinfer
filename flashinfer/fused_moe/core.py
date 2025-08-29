@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 from paddle_utils import *
 
@@ -108,7 +108,7 @@ def deduce_trtllm_gen_tensor_dtype(
         hidden_size *= 2
     if x.dtype == "bfloat16":
         dtype = DtypeTrtllmGen.Bfloat16
->>>>>>    elif x.dtype == torch.float8_e4m3fn:
+>>>>>>    elif x.dtype == paddle.float8_e4m3fn:
         dtype = DtypeTrtllmGen.E4m3 if scale is None else DtypeTrtllmGen.MxE4m3
     elif x.dtype == "uint8":
         assert scale is not None, "Scale tensor must be provided for float4x2 input"

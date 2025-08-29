@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import paddle
 from paddle_utils import *
 
@@ -182,5 +182,5 @@ if __name__ == "__main__":
         for n in [1024, 2048, 4096, 8192]:
             for k in [1024, 2048, 4096, 8192]:
                 bench_groupwise_gemm_fp8_blackwell(
->>>>>>                    m, n, k, torch.float8_e5m2, "bfloat16"
+>>>>>>                    m, n, k, paddle.float8_e5m2, "bfloat16"
                 )

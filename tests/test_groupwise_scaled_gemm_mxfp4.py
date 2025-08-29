@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer_paddle")
+sys.path.append("/home/flashinfer")
 import einops
 import paddle
 from paddle_utils import *
@@ -133,7 +133,7 @@ def gemm_mxfp8_mxfp4_nt_groupwise_ref(
     A, B, As, Bs, tile_size, n, k, output_dtype="bfloat16"
 ):
     """
-    A: (m, k), torch.float8_e4m3fn or torch.float8_e5m2
+    A: (m, k), paddle.float8_e4m3fn or paddle.float8_e5m2
     B: (n // 2, k), e2m1 packed as torch.uint8
     A_scale: (m, k // tile_size), ue8m0 saved as torch.uint8
     B_scale: (n, k // tile_size), ue8m0 saved as torch.uint8
@@ -171,10 +171,10 @@ def quantize_tensor(x, tile_size, n_padded, k_padded, quant_mode):
     """
     ue8m0_bias = 127
     if quant_mode == QuantMode.MXFP8_E4M3:
->>>>>>        fp8_info = paddle.finfo(dtype=torch.float8_e4m3fn)
+>>>>>>        fp8_info = paddle.finfo(dtype=paddle.float8_e4m3fn)
         quant_amax = paddle.to_tensor(data=fp8_info.max, dtype="float32", place=x.place)
     elif quant_mode == QuantMode.MXFP8_E5M2:
->>>>>>        fp8_info = paddle.finfo(dtype=torch.float8_e5m2)
+>>>>>>        fp8_info = paddle.finfo(dtype=paddle.float8_e5m2)
         quant_amax = paddle.to_tensor(data=fp8_info.max, dtype="float32", place=x.place)
     elif quant_mode == QuantMode.MXFP4:
         quant_amax = paddle.to_tensor(data=6, dtype="float32", place=x.place)
@@ -217,9 +217,9 @@ def quantize_tensor(x, tile_size, n_padded, k_padded, quant_mode):
     ) * x_tiled.sign()
     x_quant = x_tiled_quant.flatten(start_axis=-2, stop_axis=-1)
     if quant_mode == QuantMode.MXFP8_E4M3:
->>>>>>        x_quant_data = x_quant.to(torch.float8_e4m3fn)
+>>>>>>        x_quant_data = x_quant.to(paddle.float8_e4m3fn)
     elif quant_mode == QuantMode.MXFP8_E5M2:
->>>>>>        x_quant_data = x_quant.to(torch.float8_e5m2)
+>>>>>>        x_quant_data = x_quant.to(paddle.float8_e5m2)
     elif quant_mode == QuantMode.MXFP4:
         x_quant_data = quantize_e2m1(x_quant)
     else:
@@ -232,7 +232,7 @@ def quantize_tensor(x, tile_size, n_padded, k_padded, quant_mode):
 @pytest.mark.parametrize("n", [128, 256, 512, 2879, 4096, 8192])
 @pytest.mark.parametrize("k", [128, 256, 512, 2880, 4096, 8192])
 @pytest.mark.parametrize("group_size", [1, 2, 4, 8])
->>>>>>@pytest.mark.parametrize("fp8_dtype", [torch.float8_e4m3fn, torch.float8_e5m2])
+>>>>>>@pytest.mark.parametrize("fp8_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 @pytest.mark.parametrize("out_dtype", ["bfloat16", "float16"])
 def test_mxfp8_mxfp4_groupwise_group_gemm(m, n, k, group_size, fp8_dtype, out_dtype):
     paddle.seed(seed=0)
@@ -243,9 +243,9 @@ def test_mxfp8_mxfp4_groupwise_group_gemm(m, n, k, group_size, fp8_dtype, out_dt
     b_val = paddle.randn(shape=(group_size, n, k), dtype="float32") / math.sqrt(k)
     n_padded = (n + alignment_n - 1) // alignment_n * alignment_n
     k_padded = (k + alignment_k - 1) // alignment_k * alignment_k
->>>>>>    if fp8_dtype == torch.float8_e4m3fn:
+>>>>>>    if fp8_dtype == paddle.float8_e4m3fn:
         a_quant_mode = QuantMode.MXFP8_E4M3
->>>>>>    elif fp8_dtype == torch.float8_e5m2:
+>>>>>>    elif fp8_dtype == paddle.float8_e5m2:
         a_quant_mode = QuantMode.MXFP8_E5M2
     else:
         raise ValueError(f"Unsupported FP8 dtype: {fp8_dtype}")
@@ -323,7 +323,7 @@ def test_mxfp8_mxfp4_groupwise_group_gemm(m, n, k, group_size, fp8_dtype, out_dt
 
 
 if __name__ == "__main__":
->>>>>>    for fp8_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+>>>>>>    for fp8_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         for out_dtype in ["bfloat16", "float16"]:
             test_mxfp8_mxfp4_groupwise_group_gemm(
                 4, 2879, 2880, 2, fp8_dtype, out_dtype
