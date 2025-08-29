@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import contextlib
 import copy
 import importlib
@@ -13,7 +13,7 @@ from functools import lru_cache
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from flashinfer.tllm_utils import delay_kernel
 

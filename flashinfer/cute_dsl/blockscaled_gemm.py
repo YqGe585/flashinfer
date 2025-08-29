@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import functools
 from typing import Callable, List, Optional, Tuple, Type, Union
 
@@ -19,7 +19,7 @@ from cutlass.cute.runtime import from_dlpack, make_ptr
 from cutlass.cutlass_dsl import (Int32, Integer, dsl_user_op,
                                  extract_mlir_values, new_from_mlir_values)
 from cutlass.utils.static_persistent_tile_scheduler import WorkTileInfo
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from .utils import cutlass_to_torch_dtype, get_cutlass_dtype, get_num_sm
 

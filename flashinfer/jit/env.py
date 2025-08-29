@@ -1,10 +1,10 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import os
 
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 """
 Copyright (c) 2024 by FlashInfer team.
@@ -36,10 +36,14 @@ FLASHINFER_CUBIN_DIR = pathlib.Path(
 
 def _get_workspace_dir_name() -> pathlib.Path:
     try:
-        dev = paddle.device.get_device()
-        dev_id = int(dev.split(":")[1])
-        props = paddle.device.get_device_properties(dev_id)
-        arch = f"{props.major}{props.minor}"
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", ".*TORCH_CUDA_ARCH_LIST.*", module="torch"
+            )
+            # TODO: provide a python interface like torch
+            # flags = torch.utils.cpp_extension._get_cuda_arch_flags()
+            flags = ['-gencode=arch=compute_90,code=compute_90', '-gencode=arch=compute_90,code=sm_90']
+        arch = "_".join(sorted(set(re.findall("compute_(\\d+)", "".join(flags)))))
     except Exception:
         arch = "noarch"
     return FLASHINFER_CACHE_DIR / arch

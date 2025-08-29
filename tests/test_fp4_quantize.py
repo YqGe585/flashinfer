@@ -1,11 +1,11 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import functools
 
 import paddle
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 from utils_fp4 import cast_from_fp4, recover_swizzled_scales, ref_fp4_quant
 
 from flashinfer import (block_scale_interleave, e2m1_and_ufp8sf_scale_to_float,

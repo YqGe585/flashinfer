@@ -1,12 +1,12 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import math
 from typing import List
 
 import paddle
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 

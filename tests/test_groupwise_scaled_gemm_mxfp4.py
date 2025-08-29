@@ -1,9 +1,9 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import einops
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 """
 Copyright (c) 2025 by FlashInfer team.

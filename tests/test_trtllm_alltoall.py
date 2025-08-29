@@ -1,8 +1,8 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 """
 Copyright (c) 2024 by FlashInfer team.

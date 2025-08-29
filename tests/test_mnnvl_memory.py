@@ -1,12 +1,12 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import socket
 
 import paddle
 import pynvml
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from flashinfer.comm.mapping import Mapping
 from flashinfer.comm.mnnvl import MnnvlMemory, MpiComm

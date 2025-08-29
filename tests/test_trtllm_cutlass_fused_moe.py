@@ -1,8 +1,8 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 """
 Copyright (c) 2025 by FlashInfer team.
@@ -26,8 +26,8 @@ from flashinfer import (fp4_quantize, mxfp4_dequantize, mxfp4_dequantize_host,
                         mxfp4_quantize, mxfp8_dequantize_host, mxfp8_quantize)
 
 FLOAT4_E2M1_MAX = 6.0
->>>>>>FLOAT8_E4M3_MAX = paddle.finfo(dtype=paddle.float8_e4m3fn).max
->>>>>>FP8_DTYPE = paddle.float8_e4m3fn
+>>>>>>FLOAT8_E4M3_MAX = paddle.finfo(dtype=torch.float8_e4m3fn).max
+>>>>>>FP8_DTYPE = torch.float8_e4m3fn
 
 
 def dynamic_per_tensor_fp8_quant(
@@ -78,7 +78,7 @@ def dequantize_nvfp4_to_dtype(
     k = packed_k * 2
     tensor_f32 = break_fp4_bytes(tensor_fp4, dtype)
     tensor_f32 = tensor_f32.reshape(m, k // block_size, block_size)
->>>>>>    tensor_sf = tensor_sf.view(paddle.float8_e4m3fn)
+>>>>>>    tensor_sf = tensor_sf.view(torch.float8_e4m3fn)
     tensor_sf = convert_swizzled_to_linear(tensor_sf, m, k, block_size)
     tensor_sf_dtype = tensor_sf.to("float32") / global_scale
     out = (tensor_f32 * tensor_sf_dtype.unsqueeze(axis=-1)).reshape(m, k)
@@ -255,7 +255,7 @@ def test_moe(batch_size, hidden_size, num_experts, top_k, intermediate_size):
 @pytest.mark.parametrize("num_experts", NUM_EXPERTS)
 @pytest.mark.parametrize("top_k", TOP_K_VALUES)
 @pytest.mark.parametrize("intermediate_size", INTERMEDIATE_SIZES)
->>>>>>@pytest.mark.parametrize("otype, wtype", [("float16", paddle.float8_e4m3fn)])
+>>>>>>@pytest.mark.parametrize("otype, wtype", [("float16", torch.float8_e4m3fn)])
 def test_moe_fp8(
     batch_size, hidden_size, num_experts, top_k, intermediate_size, otype, wtype
 ):
@@ -331,7 +331,7 @@ def test_moe_fp8(
 @pytest.mark.parametrize("intermediate_size", INTERMEDIATE_SIZES)
 @pytest.mark.parametrize(
     "otype, wtype",
->>>>>>    [("float16", paddle.float8_e4m3fn), ("bfloat16", paddle.float8_e4m3fn)],
+>>>>>>    [("float16", torch.float8_e4m3fn), ("bfloat16", torch.float8_e4m3fn)],
 )
 @pytest.mark.parametrize("quantized_input", [False, True])
 @pytest.mark.skipif(
@@ -364,15 +364,15 @@ def test_moe_nvfp4(
     sf_w1_2n = round_up(2 * n, 128)
     sf_w1_k = round_up(k // quant_blocksize, 4)
     w1_blockscale = paddle.empty(
->>>>>>        shape=(e, sf_w1_2n, sf_w1_k), dtype=paddle.float8_e4m3fn
+>>>>>>        shape=(e, sf_w1_2n, sf_w1_k), dtype=torch.float8_e4m3fn
     )
     w1_blockscale_cutlass = paddle.empty(
->>>>>>        shape=(e, sf_w1_2n, sf_w1_k), dtype=paddle.float8_e4m3fn
+>>>>>>        shape=(e, sf_w1_2n, sf_w1_k), dtype=torch.float8_e4m3fn
     )
     w2 = paddle.randn(shape=(e, k, n), dtype=otype) / 10
     sf_w2_k = round_up(k, 128)
     sf_w2_n = round_up(n // quant_blocksize, 4)
->>>>>>    w2_blockscale = paddle.empty(shape=(e, sf_w2_k, sf_w2_n), dtype=paddle.float8_e4m3fn)
+>>>>>>    w2_blockscale = paddle.empty(shape=(e, sf_w2_k, sf_w2_n), dtype=torch.float8_e4m3fn)
     w1_q = paddle.empty(shape=(e, 2 * n, k // 2), dtype="uint8")
     w1_q_cutlass = paddle.empty(shape=(e, 2 * n, k // 2), dtype="uint8")
     w2_q = paddle.empty(shape=(e, k, n // 2), dtype="uint8")
@@ -728,13 +728,13 @@ def per_block_cast_to_fp8(
         .amax(axis=(1, 3), keepdim=True)
         .clip(min=0.0001)
     )
->>>>>>    x_scaled = (x_view * (448.0 / x_amax)).to(paddle.float8_e4m3fn)
+>>>>>>    x_scaled = (x_view * (448.0 / x_amax)).to(torch.float8_e4m3fn)
     x_scaled_sub = x_scaled.view_as(other=x_padded)[:m, :n].contiguous()
     scales = (x_amax / 448.0).view(x_view.shape[0], x_view.shape[2])
     return x_scaled_sub, scales
 
 
->>>>>>def per_token_group_quant_fp8(x, group_size, eps=1e-10, dtype=paddle.float8_e4m3fn):
+>>>>>>def per_token_group_quant_fp8(x, group_size, eps=1e-10, dtype=torch.float8_e4m3fn):
     """Function to perform per-token-group quantization on an input tensor
     `x` using native torch."""
     assert (
@@ -856,8 +856,8 @@ def test_moe_fp8_block_scaling(
     x_quant, x_scales = per_token_group_quant_fp8(x, group_size=128)
     w31_dequant = paddle.empty_like(x=w31_weight)
     w2_dequant = paddle.empty_like(x=w2_weight)
->>>>>>    w31_quant = paddle.empty_like(x=w31_weight).to(paddle.float8_e4m3fn)
->>>>>>    w2_quant = paddle.empty_like(x=w2_weight).to(paddle.float8_e4m3fn)
+>>>>>>    w31_quant = paddle.empty_like(x=w31_weight).to(torch.float8_e4m3fn)
+>>>>>>    w2_quant = paddle.empty_like(x=w2_weight).to(torch.float8_e4m3fn)
     w31_scales = paddle.randn(
         shape=[
             num_experts,

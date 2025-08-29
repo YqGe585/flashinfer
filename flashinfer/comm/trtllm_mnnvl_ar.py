@@ -1,10 +1,10 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import os
 
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 """
 MNNVL (Multi-Node NVLink) communication operations for FlashInfer.

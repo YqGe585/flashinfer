@@ -1,9 +1,9 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import paddle
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from flashinfer import mxfp8_dequantize_host, mxfp8_quantize
 

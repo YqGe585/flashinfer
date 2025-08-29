@@ -1,12 +1,12 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import functools
 import math
 
 import paddle
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 from flashinfer.decode import single_decode_with_kv_cache_with_jit_module

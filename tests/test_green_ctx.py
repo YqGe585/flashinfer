@@ -1,9 +1,9 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import paddle
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer.green_ctx as green_ctx
 

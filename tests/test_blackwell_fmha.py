@@ -1,12 +1,12 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import math
 
 import paddle
 import pytest
 from conftest import VARLEN_INDPTR_PARAMS
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 from flashinfer.utils import is_sm100a_supported

@@ -1,9 +1,9 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import paddle
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from flashinfer import SfLayout, autotune, mm_fp4, nvfp4_quantize
 

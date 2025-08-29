@@ -1,12 +1,12 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import cutlass
 import cutlass.cute as cute
 import paddle
 import pytest
 from cutlass.cute.runtime import make_ptr
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from flashinfer.cute_dsl.utils import is_cute_dsl_available
 

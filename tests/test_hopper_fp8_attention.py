@@ -1,13 +1,13 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 from typing import Tuple
 
 import numpy as np
 import paddle
 import pytest
 import scipy as sp
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 

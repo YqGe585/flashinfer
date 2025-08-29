@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import logging
 import multiprocessing as mp
 import socket
@@ -8,7 +8,7 @@ from typing import Any
 
 import paddle
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer.comm as comm
 

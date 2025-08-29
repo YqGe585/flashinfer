@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import ctypes
 import logging
 import os
@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import paddle
 from cuda import cuda
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from ..cuda_utils import checkCudaErrors
 from .dlpack_utils import create_dlpack_capsule, pack_strided_memory

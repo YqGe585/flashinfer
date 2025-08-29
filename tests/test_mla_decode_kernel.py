@@ -1,10 +1,10 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 from typing import Optional, Tuple
 
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 

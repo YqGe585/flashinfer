@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import argparse
 import os
 import shutil
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterator, List, Tuple
 
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from .activation import act_func_def_str, gen_act_and_mul_module
 from .cascade import gen_cascade_module

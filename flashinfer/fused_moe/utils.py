@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import contextlib
 import threading
 from dataclasses import dataclass
@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Dict, List, Tuple
 
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from ..utils import ceil_div, round_up
 

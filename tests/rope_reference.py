@@ -1,11 +1,11 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import math
 from typing import Optional, Tuple, Union
 
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 
 def apply_scaling(freqs: paddle.Tensor):

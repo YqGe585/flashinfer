@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import functools
 import gc
 import os
@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 import paddle
 import pytest
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 

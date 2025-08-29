@@ -1,11 +1,11 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 from enum import Enum
 from typing import Optional
 
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from ..jit import get_cudnn_fmha_gen_module
 

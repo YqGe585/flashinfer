@@ -1,11 +1,11 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import paddle
 import pytest
 from jit_utils import (gen_decode_attention_modules,
                        gen_prefill_attention_modules)
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 

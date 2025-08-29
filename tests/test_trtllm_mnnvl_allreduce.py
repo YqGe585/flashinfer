@@ -1,13 +1,13 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import sys
 from typing import Tuple
 
 import paddle
 import pytest
 from mpi4py import MPI
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer.comm.trtllm_mnnvl_ar as trtllm_mnnvl_ar
 from flashinfer.comm.mapping import Mapping
