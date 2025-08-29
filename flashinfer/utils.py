@@ -195,9 +195,9 @@ def canonicalize_torch_dtype(dtype: Union[paddle.dtype, str]) -> paddle.dtype:
 
 @functools.cache
 def get_compute_capability(device: str) -> Tuple[int, int]:
-    if device.type != "cuda":
-        raise ValueError("device must be a cuda device")
-    return paddle.device.cuda.get_device_capability(device=device.index)
+    # if device.type != "cuda":
+    #     raise ValueError("device must be a cuda device")
+    return paddle.device.cuda.get_device_capability(device.gpu_device_id())
 
 
 def _check_cached_qkv_data_type(
