@@ -40,7 +40,9 @@ def _get_workspace_dir_name() -> pathlib.Path:
             warnings.filterwarnings(
                 "ignore", ".*TORCH_CUDA_ARCH_LIST.*", module="torch"
             )
->>>>>>            flags = torch.utils.cpp_extension._get_cuda_arch_flags()
+            # TODO: provide a python interface like torch
+            # flags = torch.utils.cpp_extension._get_cuda_arch_flags()
+            flags = ['-gencode=arch=compute_90,code=compute_90', '-gencode=arch=compute_90,code=sm_90']
         arch = "_".join(sorted(set(re.findall("compute_(\\d+)", "".join(flags)))))
     except Exception:
         arch = "noarch"
