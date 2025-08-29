@@ -9,8 +9,18 @@ from typing import List, Optional
 
 import paddle
 from packaging.version import Version
+from paddle.utils.cpp_extension.cpp_extension import CUDA_HOME
 
 from . import env as jit_env
+
+# torch compat polyfills
+_TORCH_PATH = paddle.__path__[0]
+def _get_num_workers(verbose: bool) -> Optional[int]:
+    max_jobs = os.environ.get('MAX_JOBS')
+    if max_jobs is not None and max_jobs.isdigit():
+        return int(max_jobs)
+    return None
+
 
 
 @functools.cache
@@ -34,7 +44,9 @@ def is_cuda_version_at_least(version_str: str) -> bool:
 
 def _get_glibcxx_abi_build_flags() -> List[str]:
     glibcxx_abi_cflags = [
->>>>>>        "-D_GLIBCXX_USE_CXX11_ABI=" + str(int(torch._C._GLIBCXX_USE_CXX11_ABI))
+        # TODO: Provide a python interface like PyTorch
+        # "-D_GLIBCXX_USE_CXX11_ABI=" + str(int(torch._C._GLIBCXX_USE_CXX11_ABI))
+        "-D_GLIBCXX_USE_CXX11_ABI=1"
     ]
     return glibcxx_abi_cflags
 
@@ -66,8 +78,12 @@ def generate_ninja_build_for_op(
         "-DTORCH_EXTENSION_NAME=$name",
         "-DTORCH_API_INCLUDE_EXTENSION_H",
         "-DPy_LIMITED_API=0x03090000",
+        "-DPADDLE_WITH_CUDA",
     ]
->>>>>>    common_cflags += torch.utils.cpp_extension._get_pybind11_abi_build_flags()
+
+    # TODO: Provide a python interface like torch
+    # common_cflags += _get_pybind11_abi_build_flags()
+    common_cflags += ['-DPYBIND11_COMPILER_TYPE=\\"_gcc\\"', '-DPYBIND11_STDLIB=\\"_libstdcpp\\"', '-DPYBIND11_BUILD_ABI=\\"_cxxabi1018\\"']
     common_cflags += _get_glibcxx_abi_build_flags()
     if extra_include_dirs is not None:
         for extra_dir in extra_include_dirs:
@@ -88,20 +104,25 @@ def generate_ninja_build_for_op(
     ]
     cuda_version = get_cuda_version()
     if cuda_version >= Version("12.8"):
-        cuda_cflags += ["-static-global-template-stub=false"]
->>>>>>    cuda_cflags += torch.utils.cpp_extension._get_cuda_arch_flags(extra_cuda_cflags)
+        cuda_cflags += [
+            "-static-global-template-stub=false",
+        ]
+    # TODO: Provide a python interface, currently the `_get_cuda_arch_flags(extra_cuda_cflags)` returns []
+    # cuda_cflags += _get_cuda_arch_flags(extra_cuda_cflags)
     if extra_cuda_cflags is not None:
         cuda_cflags += extra_cuda_cflags
     ldflags = [
         "-shared",
         "-L$torch_home/lib",
+        "-L$torch_home/base",
         "-L$cuda_home/lib64",
-        "-lc10",
-        "-lc10_cuda",
-        "-ltorch_cpu",
-        "-ltorch_cuda",
-        "-ltorch",
+        "-lpaddle",
+        "-lphi",
+        "-lphi_core",
+        "-lphi_gpu",
+        "-lcommon",
         "-lcudart",
+        "-lcuda",
     ]
     env_extra_ldflags = os.environ.get("FLASHINFER_EXTRA_LDFLAGS")
     if env_extra_ldflags:
@@ -179,7 +200,7 @@ def run_ninja(workdir: Path, ninja_file: Path, verbose: bool) -> None:
         "-f",
         str(ninja_file.resolve()),
     ]
->>>>>>    num_workers = torch.utils.cpp_extension._get_num_workers(verbose)
+    _get_num_workers(verbose)
     if num_workers is not None:
         command += ["-j", str(num_workers)]
     sys.stdout.flush()
