@@ -45,10 +45,14 @@ logger = FlashInferJITLogger("flashinfer.jit")
 
 
 def check_cuda_arch():
->>>>>>    for cuda_arch_flags in torch.utils.cpp_extension._get_cuda_arch_flags():
-        arch = int(re.search("compute_(\\d+)", cuda_arch_flags).group(1))
-        if arch < 75:
-            raise RuntimeError("FlashInfer requires sm75+")
+    dev = paddle.device.get_device()
+    dev_id = int(dev.split(":")[1])
+    props = paddle.device.cuda.get_device_properties(dev_id)
+    arch = props.major * 10 + props.minor
+    if arch < 75:
+        raise RuntimeError(
+            f"FlashInfer requires sm75+, but current GPU is compute_{arch} (sm_{arch})"
+        )
 
 
 def clear_cache_dir():
@@ -120,12 +124,12 @@ class JitSpec:
         with lock:
             run_ninja(jit_env.FLASHINFER_JIT_DIR, self.ninja_path, verbose)
 
-    def load(self, so_path: Path, class_name: str = None):
+def load(self, so_path: Path, class_name: str = None):
         load_class = class_name is not None
->>>>>>        loader = torch.classes if load_class else torch.ops
+        loader = paddle.classes if load_class else paddle.ops
         loader.load_library(so_path)
         if load_class:
->>>>>>            cls = torch._C._get_custom_class_python_wrapper(self.name, class_name)
+            cls = paddle.base.core.torch_compat._get_custom_class_python_wrapper(self.name, class_name)
             return cls
         return getattr(loader, self.name)
 
