@@ -7,8 +7,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import List, Optional, Sequence, Union
 
-import torch
-import torch.utils.cpp_extension as torch_cpp_ext
+import paddle
 from filelock import FileLock
 
 from . import env as jit_env
@@ -49,7 +48,10 @@ logger = FlashInferJITLogger("flashinfer.jit")
 
 def check_cuda_arch():
     # cuda arch check for fp8 at the moment.
-    for cuda_arch_flags in torch_cpp_ext._get_cuda_arch_flags():
+    cuda_arch_flags = ['-gencode=arch=compute_90,code=compute_90', '-gencode=arch=compute_90,code=sm_90']
+    # TODO: Provide a python interface like PyTorch
+    # for cuda_arch_flags in torch_cpp_ext._get_cuda_arch_flags():
+    for cuda_arch_flags in cuda_arch_flags:
         arch = int(re.search(r"compute_(\d+)", cuda_arch_flags).group(1))
         if arch < 75:
             raise RuntimeError("FlashInfer requires sm75+")
@@ -129,10 +131,10 @@ class JitSpec:
 
     def load(self, so_path: Path, class_name: str = None):
         load_class = class_name is not None
-        loader = torch.classes if load_class else torch.ops
+        loader = paddle.classes if load_class else paddle.ops
         loader.load_library(so_path)
         if load_class:
-            cls = torch._C._get_custom_class_python_wrapper(self.name, class_name)
+            cls = paddle.base.core.torch_compat._get_custom_class_python_wrapper(self.name, class_name)
             return cls
         return getattr(loader, self.name)
 
