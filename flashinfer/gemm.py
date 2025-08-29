@@ -97,7 +97,8 @@ def get_gemm_module():
                 do_preparation: bool = False,
                 **kwargs,
             ) -> paddle.Tensor:
->>>>>>                cublas_handle = torch.cuda.current_blas_handle()
+                # TODO: Add python api like torch
+                cublas_handle = torch.cuda.current_blas_handle()
                 a, b, scale_a, scale_b, out, workspace_buffer = inputs
                 module.bmm_fp8.default(
                     a, b, out, scale_a, scale_b, workspace_buffer, cublas_handle
@@ -375,7 +376,7 @@ def fp8_gemm_sm100(
     runner_names: List[str],
 ) -> None:
     runners = []
->>>>>>    is_e5m2 = a.dtype == paddle.float8_e5m2 or b.dtype == paddle.float8_e5m2
+    is_e5m2 = a.dtype == paddle.float8_e5m2 or b.dtype == paddle.float8_e5m2
     is_sm100 = _match_sm_version(a.place, "100")
     if "cutlass" in runner_names and is_sm100 and not is_e5m2:
         runners.append(get_gemm_sm100_module_cutlass_fp8().cutlass_fp8_gemm_runner())
@@ -493,9 +494,9 @@ def gen_gemm_sm90_module() -> JitSpec:
         ("float16", "float16"),
         ("bfloat16", "bfloat16"),
         (paddle.float8_e4m3fn, "float16"),
->>>>>>        (paddle.float8_e5m2, "float16"),
+        (paddle.float8_e5m2, "float16"),
         (paddle.float8_e4m3fn, "bfloat16"),
->>>>>>        (paddle.float8_e5m2, "bfloat16"),
+        (paddle.float8_e5m2, "bfloat16"),
     ]:
         name_dtype_in = filename_safe_dtype_map[dtype_in]
         name_dtype_out = filename_safe_dtype_map[dtype_out]
@@ -995,7 +996,7 @@ def _is_cublas_fp4_available_in_cudnn():
 def _get_native_fp4_dtype():
     """get native fp4 datatype if supported in the torch, otherwise return uint8."""
     if hasattr(paddle, "float4_e2m1fn_x2"):
->>>>>>        return torch.float4_e2m1fn_x2
+        return paddle.float4_e2m1fn_x2
     else:
         return "uint8"
 
@@ -1227,7 +1228,7 @@ def _torch_data_type_to_cudnn_data_type(dtype: paddle.dtype):
         return cudnn.data_type.HALF
     elif dtype == paddle.float8_e4m3fn:
         return cudnn.data_type.FP8_E4M3
->>>>>>    elif dtype == paddle.float8_e5m2:
+    elif dtype == paddle.float8_e5m2:
         return cudnn.data_type.FP8_E5M2
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
@@ -1565,7 +1566,7 @@ def bmm_fp8(
     elif backend == "cublas":
         backends = ["cublas"]
     elif backend == "cutlass":
->>>>>>        if A.dtype == paddle.float8_e5m2 or B.dtype == paddle.float8_e5m2:
+        if A.dtype == paddle.float8_e5m2 or B.dtype == paddle.float8_e5m2:
             raise ValueError("e5m2 is not supported for cutlass backend")
         backends = ["cutlass"]
     elif backend == "auto":

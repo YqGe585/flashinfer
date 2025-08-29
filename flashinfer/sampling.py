@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import paddle
 
 """
@@ -81,7 +83,7 @@ def get_sampling_module():
         logits: paddle.Tensor,
         indices: Optional[paddle.Tensor],
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         device = logits.place
         logits = logits.astype(dtype="float32")
@@ -97,7 +99,7 @@ def get_sampling_module():
         logits: paddle.Tensor,
         indices: Optional[paddle.Tensor],
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         batch_size = indices.shape[0] if indices is not None else logits.shape[0]
         return paddle.empty(shape=batch_size, dtype="int32")
@@ -107,7 +109,7 @@ def get_sampling_module():
         probs: paddle.Tensor,
         indices: Optional[paddle.Tensor],
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         device = probs.place
         probs = probs.astype(dtype="float32")
@@ -123,7 +125,7 @@ def get_sampling_module():
         probs: paddle.Tensor,
         indices: Optional[paddle.Tensor],
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         batch_size = indices.shape[0] if indices is not None else probs.shape[0]
         return paddle.empty(shape=batch_size, dtype="int32")
@@ -135,7 +137,7 @@ def get_sampling_module():
         maybe_top_p_arr: Optional[paddle.Tensor],
         top_p_val: float,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         device = probs.place
         probs = probs.astype(dtype="float32")
@@ -164,7 +166,7 @@ def get_sampling_module():
         maybe_top_p_arr: Optional[paddle.Tensor],
         top_p_val: float,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         sample = paddle.empty(shape=probs.shape[0], dtype="int32")
         return sample
@@ -176,7 +178,7 @@ def get_sampling_module():
         maybe_top_k_arr: Optional[paddle.Tensor],
         top_k_val: int,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         device = probs.place
         probs = probs.astype(dtype="float32")
@@ -205,7 +207,7 @@ def get_sampling_module():
         maybe_top_k_arr: Optional[paddle.Tensor],
         top_k_val: int,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         batch_size = indices.shape[0] if indices is not None else probs.shape[0]
         sample = paddle.empty(shape=batch_size, dtype="int32")
@@ -218,7 +220,7 @@ def get_sampling_module():
         maybe_min_p_arr: Optional[paddle.Tensor],
         min_p_val: float,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         device = probs.place
         probs = probs.astype(dtype="float32")
@@ -249,7 +251,7 @@ def get_sampling_module():
         maybe_top_p_arr: Optional[paddle.Tensor],
         top_p_val: float,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         device = probs.place
         probs = probs.astype(dtype="float32")
@@ -287,7 +289,7 @@ def get_sampling_module():
         maybe_top_p_arr: Optional[paddle.Tensor],
         top_p_val: float,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         batch_size = indices.shape[0] if indices is not None else probs.shape[0]
         sample = paddle.empty(shape=batch_size, dtype="int32")
@@ -370,7 +372,7 @@ def get_sampling_module():
         output_accepted_token_num: paddle.Tensor,
         output_emitted_draft_token_num: paddle.Tensor,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         device = draft_probs.place
         draft_probs = draft_probs.astype(dtype="float32")
@@ -402,7 +404,7 @@ def get_sampling_module():
         output_accepted_token_num: paddle.Tensor,
         output_emitted_draft_token_num: paddle.Tensor,
         deterministic: bool,
->>>>>>        generator: Optional[torch.Generator],
+        generator: Optional[torch.Generator],
     ) -> paddle.Tensor:
         b, n = tuple(draft_token_ids.shape)
         device = draft_token_ids.place
@@ -480,7 +482,7 @@ def softmax(
     if enable_pdl is None:
         enable_pdl = device_support_pdl(logits.place)
     """Not Support auto convert *.softmax, please judge whether it is Pytorch API and convert by yourself"""
->>>>>>    return get_sampling_module().softmax(
+    return get_sampling_module().softmax(
         workspace_buffer, logits, *_to_tensor_scalar_tuple(temperature), enable_pdl
     )
 
@@ -489,7 +491,7 @@ def sampling_from_logits(
     logits: paddle.Tensor,
     indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
->>>>>>    generator: Optional[torch.Generator] = None,
+    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
 ) -> paddle.Tensor:
     """Fused GPU kernel for category sampling from logits. It's equivalent to sampling
@@ -547,7 +549,7 @@ def sampling_from_probs(
     probs: paddle.Tensor,
     indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
->>>>>>    generator: Optional[torch.Generator] = None,
+    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
 ) -> paddle.Tensor:
     """Fused GPU kernel for category sampling from probabilities.
@@ -612,7 +614,7 @@ def top_p_sampling_from_probs(
     top_p: Union[paddle.Tensor, float],
     indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
->>>>>>    generator: Optional[torch.Generator] = None,
+    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
 ) -> paddle.Tensor:
     """Fused GPU kernel for top-p sampling (nucleus sampling) from probabilities,
@@ -694,7 +696,7 @@ def top_k_sampling_from_probs(
     top_k: Union[paddle.Tensor, int],
     indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
->>>>>>    generator: Optional[torch.Generator] = None,
+    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
 ) -> paddle.Tensor:
     """Fused GPU kernel for top-k sampling from probabilities,
@@ -776,7 +778,7 @@ def min_p_sampling_from_probs(
     min_p: Union[paddle.Tensor, float],
     indices: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
->>>>>>    generator: Optional[torch.Generator] = None,
+    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
 ) -> paddle.Tensor:
     """Fused GPU kernel for `min_p sampling <https://arxiv.org/abs/2407.01082>`_ from probabilities,
@@ -855,7 +857,7 @@ def top_k_top_p_sampling_from_logits(
     indices: Optional[paddle.Tensor] = None,
     filter_apply_order: str = "top_k_first",
     deterministic: bool = True,
->>>>>>    generator: Optional[torch.Generator] = None,
+    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
 ) -> paddle.Tensor:
     """Fused GPU kernel for top-k and top-p sampling from pre-softmax logits,
@@ -975,7 +977,7 @@ def top_k_top_p_sampling_from_probs(
     indices: Optional[paddle.Tensor] = None,
     filter_apply_order: str = "top_k_first",
     deterministic: bool = True,
->>>>>>    generator: Optional[torch.Generator] = None,
+    generator: Optional[torch.Generator] = None,
     check_nan: bool = False,
 ) -> paddle.Tensor:
     """Fused GPU kernel for top-k and top-p sampling from probabilities,
@@ -1271,7 +1273,7 @@ def chain_speculative_sampling(
     maybe_output_accepted_token_num: Optional[paddle.Tensor] = None,
     maybe_output_emitted_draft_token_num: Optional[paddle.Tensor] = None,
     deterministic: bool = True,
->>>>>>    generator: Optional[torch.Generator] = None,
+    generator: Optional[torch.Generator] = None,
 ) -> paddle.Tensor:
     """Fused-GPU kernel for speculative sampling for sequence generation (proposed in
     paper `Accelerating Large Language Model Decoding with Speculative Sampling <https://arxiv.org/pdf/2302.01318>`_),

@@ -93,7 +93,7 @@ def swizzle_sf(sf: paddle.Tensor, rows: int, cols: int, scaling_vector_size: int
     """
     sf_cols = ceil_div(cols, scaling_vector_size)
     sf = sf.view(-1, rows, sf_cols)
->>>>>>    return torch.ops.trtllm.block_scale_interleave(sf)
+    return torch.ops.trtllm.block_scale_interleave(sf)
 
 
 def unswizzle_sf(
@@ -110,10 +110,10 @@ def unswizzle_sf(
     """
     sf_cols = ceil_div(cols, scaling_vector_size)
     sf = sf.view(-1, rows, sf_cols)
->>>>>>    return torch.ops.trtllm.block_scale_interleave_reverse(sf).view(-1, sf_cols)
+    return torch.ops.trtllm.block_scale_interleave_reverse(sf).view(-1, sf_cols)
 
 
->>>>>>@torch.library.custom_op("trtllm::reswizzle_sf", mutates_args=())
+# @torch.library.custom_op("trtllm::reswizzle_sf", mutates_args=())
 def reswizzle_sf(
     sf: paddle.Tensor, rows: int, cols: int, scaling_vector_size: int = 16
 ) -> paddle.Tensor:
@@ -143,7 +143,7 @@ def reswizzle_sf(
     return swizzle_sf(sf_concatenated, total_rows, cols, scaling_vector_size)
 
 
->>>>>>@torch.library.register_fake("trtllm::reswizzle_sf")
+# @torch.library.register_fake("trtllm::reswizzle_sf")
 def _(sf, rows, cols, scaling_vector_size=16):
     sf_cols = ceil_div(cols, scaling_vector_size)
     padded_rows, padded_sf_cols = compute_swizzled_sf_shape(rows, sf_cols)
