@@ -114,7 +114,7 @@ def generate_ninja_build_for_op(
         cuda_cflags += extra_cuda_cflags
     ldflags = [
         "-shared",
-        "-L$torch_home/lib",
+        "-L$torch_home/libs",
         "-L$torch_home/base",
         "-L$cuda_home/lib64",
         "-lpaddle",
@@ -123,7 +123,6 @@ def generate_ninja_build_for_op(
         "-lphi_gpu",
         "-lcommon",
         "-lcudart",
-        "-lcuda",
     ]
     env_extra_ldflags = os.environ.get("FLASHINFER_EXTRA_LDFLAGS")
     if env_extra_ldflags:
