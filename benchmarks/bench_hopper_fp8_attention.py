@@ -23,13 +23,13 @@ def bench_single_prefill(seq_len, num_heads, causal, head_dim):
         for backend in ["fa2", "fa3"]
     )
     q = paddle.randn(shape=[seq_len, num_qo_heads, head_dim], dtype="float16").to(
->>>>>>        dtype=paddle.float8_e4m3fn
+        dtype=paddle.float8_e4m3fn
     )
     k = paddle.randn(shape=[seq_len, num_kv_heads, head_dim], dtype="float16").to(
->>>>>>        dtype=paddle.float8_e4m3fn
+        dtype=paddle.float8_e4m3fn
     )
     v = paddle.randn(shape=[seq_len, num_kv_heads, head_dim], dtype="float16").to(
->>>>>>        dtype=paddle.float8_e4m3fn
+        dtype=paddle.float8_e4m3fn
     )
     fp8_sm90_ms = np.median(
         bench_gpu_time(

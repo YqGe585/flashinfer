@@ -14,7 +14,7 @@ global_workspace_buffer = None
 
 @pytest.mark.parametrize("batch_size", [1, 2, 4, 16, 32, 64, 128, 256, 512, 768, 1024])
 @pytest.mark.parametrize("scale", [1.0, 0.5])
->>>>>>@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, "bfloat16"])
+@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, "bfloat16"])
 @pytest.mark.parametrize("page_size", [32, 64])
 @pytest.mark.parametrize("q_len_per_request", [1, 2])
 @pytest.mark.parametrize("dynamic_scale", [False])
@@ -28,7 +28,7 @@ def test_trtllm_batch_decode_mla(
     dynamic_scale: bool,
     enable_pdl: bool,
 ):
->>>>>>    if dynamic_scale and dtype != paddle.float8_e4m3fn:
+    if dynamic_scale and dtype != paddle.float8_e4m3fn:
         pytest.skip("Dynamic scale is not supported for non-fp8 dtype")
     paddle.seed(seed=42)
     device = "cuda:0"
@@ -111,7 +111,7 @@ def test_trtllm_batch_decode_mla(
     wrapper = flashinfer.mla.BatchMLAPagedAttentionWrapper(
         workspace_buffer_ref, backend="fa2"
     )
->>>>>>    if dtype == paddle.float8_e4m3fn:
+    if dtype == paddle.float8_e4m3fn:
         query = query.to("bfloat16")
         kv_cache = kv_cache.to("bfloat16")
     q_indptr = (
@@ -145,7 +145,7 @@ def test_trtllm_batch_decode_mla(
     o_ref = wrapper.run(q_nope, q_pe, ckv, kpe, return_lse=False)
     assert not paddle.isnan(x=o_ref).astype("bool").any(), "o_ref is nan"
     assert not paddle.isnan(x=output).astype("bool").any(), "output is nan"
->>>>>>    if dtype == paddle.float8_e4m3fn:
+    if dtype == paddle.float8_e4m3fn:
         try:
             assert paddle.allclose(
                 x=output,

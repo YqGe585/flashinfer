@@ -1,13 +1,13 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import argparse
 import dataclasses
 from typing import Tuple
 
 import numpy as np
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 from flashinfer.testing.utils import bench_gpu_time

@@ -24,7 +24,7 @@ def bench_trtllm_fmha(batch_size, seq_len, kv_cache_dtype):
     kv_indices = paddle.arange(dtype="int32", end=num_blocks)
     q = paddle.rand(shape=[batch_size, num_qo_heads, head_dim]).to("bfloat16")
     kv_data = paddle.randn(shape=[num_blocks, 2, num_kv_heads, page_size, head_dim]).to(
->>>>>>        paddle.float8_e4m3fn if kv_cache_dtype == "fp8" else "float16"
+        paddle.float8_e4m3fn if kv_cache_dtype == "fp8" else "float16"
     )
     wrapper = flashinfer.decode.BatchDecodeWithPagedKVCacheWrapper(
         workspace_buffer, "HND", backend="trtllm-gen"
@@ -53,7 +53,7 @@ def bench_trtllm_fmha(batch_size, seq_len, kv_cache_dtype):
     print(f"memory bandwidth: {io / ms / 1024 / 1024:.2f} GB/s")
 
 
->>>>>>def to_float8(x, dtype=paddle.float8_e4m3fn):
+def to_float8(x, dtype=paddle.float8_e4m3fn):
     finfo = paddle.finfo(dtype=dtype)
     min_val, max_val = tuple(
         [
@@ -86,7 +86,7 @@ def bench_trtllm_fmha_wrapper(
     batch_size = batch_size
     num_tokens = max_seq_len * batch_size
     num_blocks = (num_tokens + page_size - 1) // page_size
->>>>>>    dtype_map = {"half": "float16", "bf16": "bfloat16", "fp8": paddle.float8_e4m3fn}
+    dtype_map = {"half": "float16", "bf16": "bfloat16", "fp8": paddle.float8_e4m3fn}
     q = paddle.randn(shape=[batch_size, num_qo_heads, head_dim]).to(dtype_map[q_dtype])
     seq_lens = paddle.full(shape=(batch_size,), fill_value=max_seq_len)
     seq_lens_tensor = paddle.to_tensor(data=seq_lens, dtype="int32", place=device)

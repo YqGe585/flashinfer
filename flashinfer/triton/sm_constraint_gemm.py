@@ -49,7 +49,7 @@ def gemm_persistent(a, b, c=None, alpha=1.0, beta=0.0, out_dtype=None, num_sms=N
         out_dtype
         if out_dtype
         else dtype
->>>>>>        if dtype != paddle.float8_e4m3fn
+        if dtype != paddle.float8_e4m3fn
         else "bfloat16"
     )
     assert (
@@ -126,7 +126,7 @@ def gemm(a, b, c=None, alpha=1.0, beta=0.0, out_dtype=None):
         out_dtype
         if out_dtype
         else dtype
->>>>>>        if dtype != paddle.float8_e4m3fn
+        if dtype != paddle.float8_e4m3fn
         else "bfloat16"
     )
     assert (
@@ -212,10 +212,10 @@ def gemm_descriptor_persistent(
         out_dtype
         if out_dtype
         else dtype
->>>>>>        if dtype != paddle.float8_e4m3fn
+        if dtype != paddle.float8_e4m3fn
         else "bfloat16"
     )
->>>>>>    if dtype == paddle.float8_e4m3fn:
+    if dtype == paddle.float8_e4m3fn:
         assert K >= 16, "Least chunk size must be 16B"
         assert N >= 16, "Least chunk size must be 16B"
     else:

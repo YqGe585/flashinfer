@@ -1,13 +1,13 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import json
 import random
 
 import cutlass
 import cutlass.torch as cutlass_torch
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from flashinfer.cute_dsl.blockscaled_gemm import (create_scale_factor_tensor,
                                                   grouped_gemm_nt_masked)

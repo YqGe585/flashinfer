@@ -48,7 +48,7 @@ def per_token_cast_to_fp8(x: paddle.Tensor) -> Tuple[paddle.Tensor, paddle.Tenso
         x_view.abs().astype(dtype="float32").amax(axis=2).view(m, -1).clip(min=0.0001)
     )
     sf = _ceil_to_ue8m0(x_amax / 448.0)
->>>>>>    return (x_view * (1.0 / sf.unsqueeze(axis=2))).to(paddle.float8_e4m3fn).view(
+    return (x_view * (1.0 / sf.unsqueeze(axis=2))).to(paddle.float8_e4m3fn).view(
         m, n
     ), sf
 
@@ -67,7 +67,7 @@ def per_block_cast_to_fp8(x: paddle.Tensor) -> Tuple[paddle.Tensor, paddle.Tenso
         .clip(min=0.0001)
     )
     sf = _ceil_to_ue8m0(x_amax / 448.0)
->>>>>>    x_scaled = (x_view * (1.0 / sf)).to(paddle.float8_e4m3fn)
+    x_scaled = (x_view * (1.0 / sf)).to(paddle.float8_e4m3fn)
     return x_scaled.view_as(other=x_padded)[:m, :n].contiguous(), sf.view(
         x_view.shape[0], x_view.shape[2]
     )
@@ -91,7 +91,7 @@ def quantize_fp8(x, scale_shape, tile_shape, scale_major_mode):
     ndim = x.ndim
     assert ndim in [2, 3], f"x.ndim must be 2 or 3, but got {ndim}"
     assert ndim == len(scale_shape) == len(tile_shape)
->>>>>>    fp8_info = paddle.finfo(dtype=paddle.float8_e4m3fn)
+    fp8_info = paddle.finfo(dtype=paddle.float8_e4m3fn)
     fp8_amax = paddle.to_tensor(data=fp8_info.max, dtype="float32", place=x.place)
     if ndim == 2:
         s0, s1 = scale_shape
@@ -150,7 +150,7 @@ def quantize_fp8(x, scale_shape, tile_shape, scale_major_mode):
                 repeat_times=[scales_permuted, "s0 s2 s1 -> (s0 t0) (s2 t1) (s1 t2)"]
             )
     x_fp32 = x / (scales_repeated + 1e-08)
->>>>>>    x_fp8 = x_fp32.to(paddle.float8_e4m3fn)
+    x_fp8 = x_fp32.to(paddle.float8_e4m3fn)
     return x_fp8, x_scale
 
 

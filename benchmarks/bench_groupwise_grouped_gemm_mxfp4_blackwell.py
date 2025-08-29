@@ -114,5 +114,5 @@ if __name__ == "__main__":
             for n in [1024, 2048, 4096, 8192]:
                 for k in [1024, 2048, 4096, 8192]:
                     bench_groupwise_grouped_gemm_mxfp4_blackwell(
->>>>>>                        group_size, m, n, k, paddle.float8_e4m3fn, "bfloat16"
+                        group_size, m, n, k, paddle.float8_e4m3fn, "bfloat16"
                     )

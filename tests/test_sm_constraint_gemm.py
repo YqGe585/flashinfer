@@ -23,11 +23,11 @@ def torch_addmm(a, b, c, alpha=1.0, beta=0.0):
 @pytest.mark.parametrize("beta", [0.0, 0.5, 2.0])
 @pytest.mark.parametrize("num_sms", [1, 16, 64, 128, 132, 133])
 @pytest.mark.parametrize(
->>>>>>    "dtype", [paddle.float8_e4m3fn, "float16", "bfloat16", "float32"]
+    "dtype", [paddle.float8_e4m3fn, "float16", "bfloat16", "float32"]
 )
 @pytest.mark.parametrize("EPILOGUE_SUBTILE", [True, False])
 def test_sm_constraint_gemm(M, N, K, alpha, beta, num_sms, dtype, EPILOGUE_SUBTILE):
->>>>>>    out_dtype = dtype if dtype != paddle.float8_e4m3fn else "bfloat16"
+    out_dtype = dtype if dtype != paddle.float8_e4m3fn else "bfloat16"
     a = paddle.randn(shape=(M, K), dtype="float16").to(dtype)
     b = paddle.randn(shape=(K, N), dtype="float16").to(dtype)
     b = b.T.contiguous()

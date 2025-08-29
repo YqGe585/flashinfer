@@ -55,7 +55,7 @@ if __name__ == "__main__":
         print(f"Current device capability: {device_capability}.")
         print("Current benchmark targets capability (9, 0). Returning...")
         exit()
->>>>>>    for dtype_in in [paddle.float8_e4m3fn, "bfloat16"]:
+    for dtype_in in [paddle.float8_e4m3fn, "bfloat16"]:
         for dtype_out in ["bfloat16"]:
             for batch_size in [1, 3, 8, 16]:
                 for num_tokens_per_group in [32, 64, 128, 256, 512]:

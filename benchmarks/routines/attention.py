@@ -1,11 +1,11 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 from collections import defaultdict
 
 import numpy as np
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 from flashinfer.testing.utils import (
@@ -208,10 +208,10 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
     rtol = 0.2
     atol = 0.01
     q_dtype = dtype_str_to_torch_dtype(args.q_dtype)
->>>>>>    if q_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
+    if q_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
         raise ValueError(f"Unsupported q_dtype: {args.q_dtype}")
     kv_dtype = dtype_str_to_torch_dtype(args.kv_dtype)
->>>>>>    if kv_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
+    if kv_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
         raise ValueError(f"Unsupported kv_dtype: {args.kv_dtype}")
     backends = args.backends
     page_size = args.page_size
@@ -236,9 +236,9 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
             backends.remove("fa2")
     if "fa2_tc" in backends:
         remove_fa2_tc = False
->>>>>>        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
->>>>>>            paddle.float8_e4m3fn,
->>>>>>            paddle.float8_e5m2,
+        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
+            paddle.float8_e4m3fn,
+            paddle.float8_e5m2,
         ]:
             print("[INFO] FA2_TC backend does not support FP8. Skipping.")
             remove_fa2_tc = True
@@ -246,9 +246,9 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
             backends.remove("fa2_tc")
     if "cudnn" in backends:
         remove_cudnn = False
->>>>>>        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
->>>>>>            paddle.float8_e4m3fn,
->>>>>>            paddle.float8_e5m2,
+        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
+            paddle.float8_e4m3fn,
+            paddle.float8_e5m2,
         ]:
             print("[INFO] cuDNN backend does not support FP8. Skipping.")
             remove_cudnn = True
@@ -392,9 +392,9 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
                 data_type=kv_dtype,
             )
     k_scale, v_scale = None, None
->>>>>>    if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         q = q.to(q_dtype)
->>>>>>    if kv_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if kv_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         k_data, v_data = paddle.chunk(x=kv_cache, chunks=2, axis=1)
         k_scale = k_data.amax().item() / 256
         v_scale = v_data.amax().item() / 256
@@ -476,7 +476,7 @@ def testBatchDecodeWithPagedKVCacheWrapper(args):
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 1:
         if run_refcheck and has_reference_output:
->>>>>>            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
                 if args.verbose >= 2:
                     print(
                         "[VVERBOSE] Reference output is FP8. Converting to float32 for reference check."
@@ -580,10 +580,10 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
     rtol = 0.2
     atol = 0.01
     q_dtype = dtype_str_to_torch_dtype(args.q_dtype)
->>>>>>    if q_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
+    if q_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
         raise ValueError(f"Unsupported q_dtype: {args.q_dtype}")
     kv_dtype = dtype_str_to_torch_dtype(args.kv_dtype)
->>>>>>    if kv_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
+    if kv_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
         raise ValueError(f"Unsupported kv_dtype: {args.kv_dtype}")
     backends = args.backends
     page_size = args.page_size
@@ -599,7 +599,7 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
     run_refcheck = args.refcheck
     if "fa2" in backends:
         remove_fa2 = False
->>>>>>        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
             print("[INFO] FA2 backend does not support FP8. Skipping.")
             remove_fa2 = True
         if remove_fa2:
@@ -616,8 +616,8 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
             backends.remove("fa3")
     if "cudnn" in backends:
         remove_cudnn = False
->>>>>>        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
->>>>>>            paddle.float8_e4m3fn,
+        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
+            paddle.float8_e4m3fn,
 >>>>>>            paddle.float8_e5m2,
         ]:
             print("[INFO] cuDNN backend does not support FP8. Skipping.")
@@ -626,8 +626,8 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
             backends.remove("cudnn")
     if "trtllm-gen" in backends:
         remove_trtllm = False
->>>>>>        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
->>>>>>            paddle.float8_e4m3fn,
+        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
+            paddle.float8_e4m3fn,
 >>>>>>            paddle.float8_e5m2,
         ]:
             print("[INFO] trtllm-gen backend does not support FP8. Skipping.")
@@ -807,9 +807,9 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
                 kv_data_type=kv_dtype,
             )
     k_scale, v_scale = None, None
->>>>>>    if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         q = q.to(q_dtype)
->>>>>>    if kv_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if kv_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         k_data, v_data = paddle.chunk(x=kv_cache, chunks=2, axis=1)
         k_scale = k_data.amax().item() / 256
         v_scale = v_data.amax().item() / 256
@@ -892,7 +892,7 @@ def testBatchPrefillWithPagedKVCacheWrapper(args):
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 1:
         if run_refcheck and has_reference_output:
->>>>>>            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
                 if args.verbose >= 2:
                     print(
                         "[VVERBOSE] Reference output is FP8. Converting to float32 for reference check."
@@ -996,10 +996,10 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
     rtol = 0.2
     atol = 0.01
     q_dtype = dtype_str_to_torch_dtype(args.q_dtype)
->>>>>>    if q_dtype not in ["bfloat16", paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if q_dtype not in ["bfloat16", paddle.float8_e4m3fn, paddle.float8_e5m2]:
         raise ValueError(f"Unsupported q_dtype: {args.q_dtype}")
     kv_dtype = dtype_str_to_torch_dtype(args.kv_dtype)
->>>>>>    if kv_dtype not in ["bfloat16", paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if kv_dtype not in ["bfloat16", paddle.float8_e4m3fn, paddle.float8_e5m2]:
         raise ValueError(f"Unsupported kv_dtype: {args.kv_dtype}")
     backends = args.backends
     batch_size = args.batch_size
@@ -1014,8 +1014,8 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
     run_refcheck = args.refcheck
     if "cudnn" in backends:
         remove_cudnn = False
->>>>>>        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
->>>>>>            paddle.float8_e4m3fn,
+        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
+            paddle.float8_e4m3fn,
 >>>>>>            paddle.float8_e5m2,
         ]:
             print("[INFO] CUDNN backend does not support FP8. Skipping.")
@@ -1024,8 +1024,8 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
             backends.remove("cudnn")
     if "cutlass" in backends:
         remove_cutlass = False
->>>>>>        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
->>>>>>            paddle.float8_e4m3fn,
+        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
+            paddle.float8_e4m3fn,
 >>>>>>            paddle.float8_e5m2,
         ]:
             print("[INFO] CUTLASS backend does not support FP8. Skipping.")
@@ -1169,9 +1169,9 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
                 kv_data_type=kv_dtype,
             )
     k_scale, v_scale = None, None
->>>>>>    if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         q = q.to(q_dtype)
->>>>>>    if kv_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if kv_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         k_scale = k.amax().item() / 256
         v_scale = v.amax().item() / 256
         k = (k / k_scale).to(kv_dtype)
@@ -1236,7 +1236,7 @@ def testBatchPrefillWithRaggedKVCacheWrapper(args):
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 1:
         if run_refcheck and has_reference_output:
->>>>>>            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
                 if args.verbose >= 2:
                     print(
                         "[VVERBOSE] Reference output is FP8. Converting to float32 for reference check."
@@ -1340,10 +1340,10 @@ def testBatchMLAPagedAttentionWrapper(args):
     rtol = 0.2
     atol = 0.01
     q_dtype = dtype_str_to_torch_dtype(args.q_dtype)
->>>>>>    if q_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
+    if q_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
         raise ValueError(f"Unsupported q_dtype: {args.q_dtype}")
     kv_dtype = dtype_str_to_torch_dtype(args.kv_dtype)
->>>>>>    if kv_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
+    if kv_dtype not in ["bfloat16", paddle.float8_e4m3fn]:
         raise ValueError(f"Unsupported kv_dtype: {args.kv_dtype}")
     backends = args.backends
     page_size = args.page_size
@@ -1360,8 +1360,8 @@ def testBatchMLAPagedAttentionWrapper(args):
     run_refcheck = args.refcheck
     if "fa2" in backends:
         remove_fa2 = False
->>>>>>        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
->>>>>>            paddle.float8_e4m3fn,
+        if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2] or kv_dtype in [
+            paddle.float8_e4m3fn,
 >>>>>>            paddle.float8_e5m2,
         ]:
             print("[INFO] FA2 backend does not support FP8. Skipping.")
@@ -1471,11 +1471,11 @@ def testBatchMLAPagedAttentionWrapper(args):
             q_data_type=q_dtype,
             kv_data_type=kv_dtype,
         )
->>>>>>    if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if q_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         q = q.to(q_dtype)
         q_pe = q_pe.to(q_dtype)
         q_nope = q_nope.to(q_dtype)
->>>>>>    if kv_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if kv_dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         ckv_cache = ckv_cache.to(kv_dtype)
         kpe_cache = kpe_cache.to(kv_dtype)
         kv_cache = kv_cache.to(kv_dtype)
@@ -1537,7 +1537,7 @@ def testBatchMLAPagedAttentionWrapper(args):
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 1:
         if run_refcheck and has_reference_output:
->>>>>>            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
                 reference_output = reference_output.to("float32")
                 tested_outputs = [output.to("float32") for output in tested_outputs]
             for i in range(len(tested_outputs)):

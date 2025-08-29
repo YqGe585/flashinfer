@@ -346,7 +346,7 @@ def test_rope_cos_sin_cache(
 
 @pytest.mark.parametrize("num_tokens", [1, 19, 128, 199, 899, 2047])
 @pytest.mark.parametrize("input_dtype", ["float16", "bfloat16"])
->>>>>>@pytest.mark.parametrize("quant_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
+@pytest.mark.parametrize("quant_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 def test_mla_rope_quantize(num_tokens, input_dtype, quant_dtype):
     device = "cuda:0"
     num_qo_heads = 128
@@ -392,4 +392,4 @@ def test_mla_rope_quantize(num_tokens, input_dtype, quant_dtype):
 
 
 if __name__ == "__main__":
->>>>>>    test_mla_rope_quantize(1, 1, "float16", paddle.float8_e4m3fn)
+    test_mla_rope_quantize(1, 1, "float16", paddle.float8_e4m3fn)

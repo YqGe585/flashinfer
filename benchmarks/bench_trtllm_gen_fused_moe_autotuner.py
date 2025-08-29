@@ -1,12 +1,12 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import argparse
 from typing import Literal, Optional
 
 import numpy as np
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from flashinfer import (GatedActType, RoutingMethodType, fp4_quantize,
                         mxfp8_quantize, next_positive_power_of_2)
@@ -47,13 +47,13 @@ def bench_trtllm_gen_fused_moe_autotuner(
             sf_vec_size=16,
             sf_use_ue8m0=False,
         )
->>>>>>        hidden_states_scale = hidden_states_scale.view(paddle.float8_e4m3fn).reshape(
+        hidden_states_scale = hidden_states_scale.view(paddle.float8_e4m3fn).reshape(
             num_tokens, -1
         )
         hidden_states_global_scale = 1.0 / 448.0 / 6.0
     elif quant_mode == "MxFP4xMxFP8":
         hidden_states, hidden_states_scale = mxfp8_quantize(hidden_states, False)
->>>>>>        hidden_states_scale = hidden_states_scale.view(paddle.float8_e4m3fn).reshape(
+        hidden_states_scale = hidden_states_scale.view(paddle.float8_e4m3fn).reshape(
             num_tokens, -1
         )
         hidden_states_global_scale = 1.0
@@ -73,7 +73,7 @@ def bench_trtllm_gen_fused_moe_autotuner(
             sf_vec_size=16,
             sf_use_ue8m0=False,
         )
->>>>>>        w13_scale = w13_scale.view(paddle.float8_e4m3fn).reshape(
+        w13_scale = w13_scale.view(paddle.float8_e4m3fn).reshape(
             num_experts, intermediate_size * 2, -1
         )
         w2, w2_scale = fp4_quantize(
@@ -82,7 +82,7 @@ def bench_trtllm_gen_fused_moe_autotuner(
             sf_vec_size=16,
             sf_use_ue8m0=False,
         )
->>>>>>        w2_scale = w2_scale.view(paddle.float8_e4m3fn).reshape(
+        w2_scale = w2_scale.view(paddle.float8_e4m3fn).reshape(
             num_experts, hidden_size, -1
         )
         w13_global_scale = 1.0 / 448.0 / 6.0
@@ -94,7 +94,7 @@ def bench_trtllm_gen_fused_moe_autotuner(
             sf_vec_size=32,
             sf_use_ue8m0=True,
         )
->>>>>>        w13_scale = w13_scale.view(paddle.float8_e4m3fn).reshape(
+        w13_scale = w13_scale.view(paddle.float8_e4m3fn).reshape(
             num_experts, intermediate_size * 2, -1
         )
         w2, w2_scale = fp4_quantize(
@@ -103,7 +103,7 @@ def bench_trtllm_gen_fused_moe_autotuner(
             sf_vec_size=32,
             sf_use_ue8m0=True,
         )
->>>>>>        w2_scale = w2_scale.view(paddle.float8_e4m3fn).reshape(
+        w2_scale = w2_scale.view(paddle.float8_e4m3fn).reshape(
             num_experts, hidden_size, -1
         )
         w13_global_scale = 1.0

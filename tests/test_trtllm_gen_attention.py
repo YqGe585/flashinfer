@@ -14,7 +14,7 @@ from flashinfer.utils import FP4Tensor, ceil_div, round_up
 DTYPE_MAP = {
     "fp16": "float16",
     "bf16": "bfloat16",
->>>>>>    "fp8": paddle.float8_e4m3fn,
+    "fp8": paddle.float8_e4m3fn,
     "nvfp4": "nvfp4",
 }
 GPU_DEVICE = "cuda:0"
@@ -27,7 +27,7 @@ def flip_coin(*args, **kwargs):
     return hash_value % 2 == 0
 
 
->>>>>>def to_float8(x, dtype=paddle.float8_e4m3fn):
+def to_float8(x, dtype=paddle.float8_e4m3fn):
     finfo = paddle.finfo(dtype=dtype)
     min_val, max_val = tuple(
         [
@@ -142,7 +142,7 @@ def create_output(q, o_dtype, create_out_tensor):
                 tuple(q.shape)[0] + extra_size, 128
             ), round_up(tuple(q.shape)[1] * tuple(q.shape)[2] // o_sf_vec_size, 4)
             out_scale_factor = paddle.empty(
->>>>>>                shape=fp4_out_scale_shape, dtype=paddle.float8_e4m3fn
+                shape=fp4_out_scale_shape, dtype=paddle.float8_e4m3fn
             )
             rounded_extra_size = fp4_out_scale_shape[0] - tuple(q.shape)[0]
             o_sf_start_index = (

@@ -3139,7 +3139,7 @@ def trtllm_batch_context_with_kv_cache(
     sm_count = get_device_sm_count(query.place)
     if out_dtype == "nvfp4" or out_dtype is None and isinstance(out, FP4Tensor):
         assert (
->>>>>>            query.dtype == paddle.float8_e4m3fn
+            query.dtype == paddle.float8_e4m3fn
         ), "query must be fp8 when out_dtype is nvfp4."
         assert o_sf_scale is not None
         assert o_sf_vec_size in [None, 16], "only o_sf_vec_size = 16 is supported"
@@ -3157,7 +3157,7 @@ def trtllm_batch_context_with_kv_cache(
                 tuple(query.shape)[1] * tuple(query.shape)[2] // o_sf_vec_size, 4
             )
             out_scale_factor = paddle.empty(
->>>>>>                shape=fp4_out_scale_shape, dtype=paddle.float8_e4m3fn
+                shape=fp4_out_scale_shape, dtype=paddle.float8_e4m3fn
             )
             o_sf_start_index = 0
             out = paddle.empty(shape=fp4_out_shape, dtype="uint8")
@@ -3168,7 +3168,7 @@ def trtllm_batch_context_with_kv_cache(
         check_shape_dtype_device(
             out_scale_factor,
             fp4_out_scale_shape,
->>>>>>            paddle.float8_e4m3fn,
+            paddle.float8_e4m3fn,
             query.place,
             "out_scale_factor",
         )

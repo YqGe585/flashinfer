@@ -8,7 +8,7 @@ from flashinfer.paddle_utils import *
 from flashinfer import autotune, bmm_fp8
 
 
->>>>>>def to_float8(x, dtype=paddle.float8_e4m3fn):
+def to_float8(x, dtype=paddle.float8_e4m3fn):
     finfo = paddle.finfo(dtype=dtype)
     min_val, max_val = tuple(
         [
@@ -26,8 +26,8 @@ from flashinfer import autotune, bmm_fp8
 @pytest.mark.parametrize("m", [48, 128])
 @pytest.mark.parametrize("n", [80, 64])
 @pytest.mark.parametrize("k", [64, 256])
->>>>>>@pytest.mark.parametrize("input_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
->>>>>>@pytest.mark.parametrize("mat2_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
+@pytest.mark.parametrize("input_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
+@pytest.mark.parametrize("mat2_dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 @pytest.mark.parametrize("res_dtype", ["bfloat16", "float16"])
 @pytest.mark.parametrize("backend", ["cudnn", "cublas", "cutlass", "auto"])
 @pytest.mark.parametrize("auto_tuning", [True, False])

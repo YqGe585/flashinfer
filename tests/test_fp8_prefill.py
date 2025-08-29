@@ -28,7 +28,7 @@ import flashinfer
 @pytest.mark.parametrize("num_qo_heads", [4, 32])
 @pytest.mark.parametrize("head_dim", [128, 256])
 @pytest.mark.parametrize("kv_layout", ["HND", "NHD"])
->>>>>>@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
+@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 def test_batch_prefill_with_paged_kv_cache_fp8_calibration_scale(
     batch_size,
     qo_len,
@@ -119,7 +119,7 @@ def test_batch_prefill_with_paged_kv_cache_fp8_calibration_scale(
 @pytest.mark.parametrize("num_qo_heads", [4, 32])
 @pytest.mark.parametrize("head_dim", [128, 256])
 @pytest.mark.parametrize("kv_layout", ["HND", "NHD"])
->>>>>>@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
+@pytest.mark.parametrize("dtype", [paddle.float8_e4m3fn, paddle.float8_e5m2])
 def test_batch_decode_with_prefill_with_paged_kv_cache(
     batch_size,
     kv_len,

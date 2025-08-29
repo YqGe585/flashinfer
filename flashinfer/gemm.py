@@ -233,7 +233,7 @@ def gen_gemm_sm100_module() -> JitSpec:
             jit_env.FLASHINFER_CSRC_DIR / f"{prefix}_sm100_kernel_inst.jinja"
         ) as f:
             kernel_inst_templ = jinja2.Template(f.read())
->>>>>>        dtype_in_list = [paddle.float8_e4m3fn, paddle.float8_e5m2]
+        dtype_in_list = [paddle.float8_e4m3fn, paddle.float8_e5m2]
         dtype_out_list = ["float16", "bfloat16"]
         scale_major_k_list = ["true", "false"]
         mma_sm_list = [1, 2]
@@ -257,7 +257,7 @@ def gen_gemm_sm100_module() -> JitSpec:
     prefix = "group_gemm_mxfp4_groupwise"
     with open(jit_env.FLASHINFER_CSRC_DIR / f"{prefix}_sm100_kernel_inst.jinja") as f:
         kernel_inst_templ = jinja2.Template(f.read())
->>>>>>    dtype_a_list = [paddle.float8_e4m3fn, paddle.float8_e5m2]
+    dtype_a_list = [paddle.float8_e4m3fn, paddle.float8_e5m2]
     dtype_d_list = ["float16", "bfloat16"]
     mma_sm_list = [1, 2]
     swap_ab_list = ["true", "false"]
@@ -492,9 +492,9 @@ def gen_gemm_sm90_module() -> JitSpec:
     for dtype_in, dtype_out in [
         ("float16", "float16"),
         ("bfloat16", "bfloat16"),
->>>>>>        (paddle.float8_e4m3fn, "float16"),
+        (paddle.float8_e4m3fn, "float16"),
 >>>>>>        (paddle.float8_e5m2, "float16"),
->>>>>>        (paddle.float8_e4m3fn, "bfloat16"),
+        (paddle.float8_e4m3fn, "bfloat16"),
 >>>>>>        (paddle.float8_e5m2, "bfloat16"),
     ]:
         name_dtype_in = filename_safe_dtype_map[dtype_in]
@@ -1116,8 +1116,8 @@ def execute_cudnn_gemm_fp4_graph(
     variant_pack = {
         UIDs.A_UID.value: a.view(_get_native_fp4_dtype()),
         UIDs.B_UID.value: b.view(_get_native_fp4_dtype()),
->>>>>>        UIDs.BLOCK_DESCALE_A_UID.value: a_descale.view(paddle.float8_e4m3fn),
->>>>>>        UIDs.BLOCK_DESCALE_B_UID.value: b_descale.view(paddle.float8_e4m3fn),
+        UIDs.BLOCK_DESCALE_A_UID.value: a_descale.view(paddle.float8_e4m3fn),
+        UIDs.BLOCK_DESCALE_B_UID.value: b_descale.view(paddle.float8_e4m3fn),
         UIDs.ALPHA_UID.value: alpha.view("float32"),
         UIDs.O_UID.value: c_final,
     }
@@ -1225,7 +1225,7 @@ def _torch_data_type_to_cudnn_data_type(dtype: paddle.dtype):
         return cudnn.data_type.BFLOAT16
     elif dtype == "float16":
         return cudnn.data_type.HALF
->>>>>>    elif dtype == paddle.float8_e4m3fn:
+    elif dtype == paddle.float8_e4m3fn:
         return cudnn.data_type.FP8_E4M3
 >>>>>>    elif dtype == paddle.float8_e5m2:
         return cudnn.data_type.FP8_E5M2
@@ -1405,8 +1405,8 @@ def mm_fp4(
         raise ValueError(
             f"a and b must have float4_e2m1fn_x2 packed into uint8. Got {a.dtype} and {b.dtype}."
         )
->>>>>>    if a_descale.dtype not in {paddle.float8_e4m3fn, "uint8"} or b_descale.dtype not in {
->>>>>>        paddle.float8_e4m3fn,
+    if a_descale.dtype not in {paddle.float8_e4m3fn, "uint8"} or b_descale.dtype not in {
+        paddle.float8_e4m3fn,
         "uint8",
     }:
         raise ValueError(
@@ -1454,7 +1454,7 @@ def mm_fp4(
             expanded_b_descale_shape,
             expanded_b_descale_stride,
             cudnn.data_type.FP4_E2M1,
->>>>>>            paddle.float8_e4m3fn,
+            paddle.float8_e4m3fn,
             _torch_data_type_to_cudnn_data_type(out_dtype),
             block_size,
             a.place,
@@ -1478,9 +1478,9 @@ def mm_fp4(
             workspace_buffer=workspace_buffer,
         )
     elif backend == "cutlass":
->>>>>>        if a.dtype == "uint8" and a_descale.dtype == paddle.float8_e4m3fn:
+        if a.dtype == "uint8" and a_descale.dtype == paddle.float8_e4m3fn:
             a_descale = a_descale.view("uint8")
->>>>>>        if b.dtype == "uint8" and b_descale.dtype == paddle.float8_e4m3fn:
+        if b.dtype == "uint8" and b_descale.dtype == paddle.float8_e4m3fn:
             b_descale = b_descale.view("uint8")
         get_gemm_sm100_module_cutlass_fp4().cutlass_fp4_gemm(
             a, b.T, a_descale, b_descale.T, alpha, out, workspace_buffer
@@ -1898,8 +1898,8 @@ def group_gemm_fp8_nt_groupwise(
     float_workspace_buffer = _get_cache_buf(
         "group_gemm_fp8_nt_groupwise_float_workspace", DEFAULT_WORKSPACE_SIZE, a.place
     )
->>>>>>    assert a.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
->>>>>>    assert b.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
+    assert a.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
+    assert b.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
     assert a_scale.dtype == "float32"
     assert b_scale.dtype == "float32"
     assert m_indptr.dtype == "int32"
@@ -2018,7 +2018,7 @@ def group_gemm_mxfp8_mxfp4_nt_groupwise(
     float_workspace_buffer = _get_cache_buf(
         "group_gemm_mxfp4_nt_groupwise_float_workspace", DEFAULT_WORKSPACE_SIZE, a.place
     )
->>>>>>    assert a.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
+    assert a.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]
     assert b.dtype == "uint8"
     assert a_scale.dtype == "uint8"
     assert b_scale.dtype == "uint8"

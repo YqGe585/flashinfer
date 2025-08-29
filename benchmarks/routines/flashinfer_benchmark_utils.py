@@ -1,8 +1,8 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 from flashinfer.testing.utils import set_seed
 
@@ -130,7 +130,7 @@ def dtype_str_to_torch_dtype(dtype_str):
     elif dtype_str == "float64":
         return "float64"
     elif dtype_str == "fp8_e4m3":
->>>>>>        return paddle.float8_e4m3fn
+        return paddle.float8_e4m3fn
     elif dtype_str == "fp8_e5m2":
 >>>>>>        return paddle.float8_e5m2
     else:

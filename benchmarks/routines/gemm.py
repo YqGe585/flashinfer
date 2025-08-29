@@ -1,12 +1,12 @@
 import sys
 
-sys.path.append("/home/flashinfer")
+
 from collections import defaultdict
 
 import einops
 import numpy as np
 import paddle
-from paddle_utils import *
+from flashinfer.paddle_utils import *
 
 import flashinfer
 from flashinfer.testing.utils import (bench_gpu_time,
@@ -140,7 +140,7 @@ def parse_gemm_args(line, parser):
     return args
 
 
->>>>>>def to_float8(x, dtype=paddle.float8_e4m3fn):
+def to_float8(x, dtype=paddle.float8_e4m3fn):
     finfo = paddle.finfo(dtype=dtype)
     min_val, max_val = tuple(
         [
@@ -309,7 +309,7 @@ def testGemmFp8NtGroupwise(args):
             problem_flops = 2 * m * n * k
             problem_bytes = (
                 m * k + n * k
->>>>>>            ) * paddle.float8_e4m3fn.itemsize + m * n * out_dtype.element_size()
+            ) * paddle.float8_e4m3fn.itemsize + m * n * out_dtype.element_size()
             tflops = problem_flops / (10**9 * median_time)
             tb_per_sec = problem_bytes / (10**9 * median_time)
             print_perf_metrics(backend, median_time, std_time, tflops, tb_per_sec)
@@ -469,7 +469,7 @@ def testGroupGemmFp8NtGroupwise(args):
             std_time = np.std(backend_times[backend])
             problem_flops = 2 * m * n * k * group_size
             problem_bytes = (
->>>>>>                (group_size * m * k + group_size * n * k) * paddle.float8_e4m3fn.itemsize
+                (group_size * m * k + group_size * n * k) * paddle.float8_e4m3fn.itemsize
                 + group_size * m * n * out_dtype.element_size()
             )
             tflops = problem_flops / (10**9 * median_time)
@@ -533,12 +533,12 @@ def testBmmFp8(args):
     is_cuda_graph_compatible = not args.no_cuda_graph
     run_refcheck = args.refcheck
     input_dtype = dtype_str_to_torch_dtype(args.input_dtype)
->>>>>>    if input_dtype not in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if input_dtype not in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         raise ValueError(
             f"Unsupported input dtype: {input_dtype}. Supported dtypes are fp8_e4m3 and fp8_e5m2."
         )
     mat2_dtype = dtype_str_to_torch_dtype(args.mat2_dtype)
->>>>>>    if mat2_dtype not in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+    if mat2_dtype not in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
         raise ValueError(
             f"Unsupported mat2 dtype: {mat2_dtype}. Supported dtypes are fp8_e4m3 and fp8_e5m2."
         )
@@ -612,7 +612,7 @@ def testBmmFp8(args):
     tested_outputs = list(outputs.values())
     if len(tested_backends) > 0:
         if run_refcheck and has_reference_output:
->>>>>>            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
+            if reference_output.dtype in [paddle.float8_e4m3fn, paddle.float8_e5m2]:
                 print(
                     "[INFO] Reference output is FP8. Converting to float32 for reference check."
                 )

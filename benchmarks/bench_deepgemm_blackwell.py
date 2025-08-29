@@ -111,12 +111,12 @@ if __name__ == "__main__":
                     continue
                 if m * batch_size <= 16384:
                     bench_deepgemm_grouped_fp8_blackwell(
->>>>>>                        batch_size, m, n, k, paddle.float8_e4m3fn, "bfloat16"
+                        batch_size, m, n, k, paddle.float8_e4m3fn, "bfloat16"
                     )
     for batch_size in [1, 4, 8, 64, 128, 256]:
         for m in [128, 256, 1024, 8192, 16384]:
             for n, k in [(128, 512), (512, 128), (4096, 7168), (7168, 2048)]:
                 if m * batch_size <= 16384:
                     bench_deepgemm_batch_fp8_blackwell(
->>>>>>                        batch_size, m, n, k, paddle.float8_e4m3fn, "bfloat16"
+                        batch_size, m, n, k, paddle.float8_e4m3fn, "bfloat16"
                     )

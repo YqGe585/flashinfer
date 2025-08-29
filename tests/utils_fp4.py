@@ -75,7 +75,7 @@ def ref_fp4_quant(x, global_scale, block_size, sf_use_ue8m0=False):
         scale = scale.view("int32") + 8388607 & 2139095040
         scale = scale.view("float32")
     else:
->>>>>>        scale = scale.to(paddle.float8_e4m3fn).to("float32")
+        scale = scale.to(paddle.float8_e4m3fn).to("float32")
     output_scale = get_reciprocal(scale * get_reciprocal(global_scale))
     scaled_x = sliced_x.to("float32") * output_scale
     clipped_x = paddle.clip(x=scaled_x, min=-6.0, max=6.0).reshape(tuple(x.shape))

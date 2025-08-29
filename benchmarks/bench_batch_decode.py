@@ -77,7 +77,7 @@ def bench_batch_decode(
 
 if __name__ == "__main__":
     for q_dtype in ["bfloat16"]:
->>>>>>        for kv_dtype in ["bfloat16", paddle.float8_e4m3fn]:
+        for kv_dtype in ["bfloat16", paddle.float8_e4m3fn]:
             for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]:
                 for seq_len in [512, 1024, 2048, 4096, 8192, 16384]:
                     bench_batch_decode(
